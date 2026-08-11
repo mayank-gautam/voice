@@ -758,7 +758,7 @@ function LogsContent() {
               {loadingMore && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                  Loading next {LOGS_CHUNK_SIZE} logs…
+                  Loading next up to {LOGS_CHUNK_SIZE} logs…
                 </div>
               )}
               {loadMoreError && !loadingMore && (

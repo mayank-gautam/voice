@@ -173,9 +173,10 @@ const CallLogs = () => {
       if (!res.ok) throw new Error(data?.error?.message || "Failed to load logs");
 
       setConfigured(data.configured !== false);
-      setHasMore(Boolean(data.hasMore));
-
       const page: LogEvent[] = data.events || [];
+      // Short last page (e.g. 123 of 523) always ends pagination.
+      setHasMore(Boolean(data.hasMore) && (opts.all || page.length >= PAGE_SIZE));
+
       setEvents((prev) => {
         if (!opts.append || opts.all) {
           eventsLenRef.current = page.length;

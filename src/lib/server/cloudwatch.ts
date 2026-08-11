@@ -523,8 +523,10 @@ export async function fetchLogs(
   }
 
   const window = unique.slice(offset);
-  const hasMore = window.length > pageSize;
+  // Always return up to `pageSize` (e.g. 200). Last page may be shorter
+  // (e.g. 523 → 200 + 200 + 123) and then hasMore is false.
   const events = window.slice(0, pageSize);
+  const hasMore = window.length > events.length;
   const nextOffset = offset + events.length;
   const nextCursor =
     events.length > 0 ? String(events[events.length - 1].timestamp) : null;

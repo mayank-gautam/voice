@@ -68,9 +68,12 @@ async function parseLogsResponse(
   }
 
   const events = (data.events || []) as LogsApiEvent[];
+  const requestedLimit = params.limit ?? LOGS_CHUNK_SIZE;
+  // A short page (remainder < 200) means we are done, even if the API flag is wrong.
+  const hasMore = Boolean(data.hasMore) && events.length >= requestedLimit;
   return {
     events,
-    hasMore: Boolean(data.hasMore),
+    hasMore,
     nextOffset:
       typeof data.nextOffset === "number"
         ? data.nextOffset
