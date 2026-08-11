@@ -15,19 +15,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { User, Bell, Shield, Database, Palette, Globe, Key, Save } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import { ProjectSettingsCard } from "@/components/project/ProjectSettingsCard";
 import { toast } from "@/hooks/use-toast";
 
 const Settings = () => {
   const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
   const [notifications, setNotifications] = useState({
     email: true,
     slack: false,
     sms: false,
     criticalOnly: false,
   });
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleSave = () => {
     toast({
@@ -238,7 +243,11 @@ const Settings = () => {
                 <Label>Theme</Label>
                 <p className="text-sm text-muted-foreground">Choose your preferred theme</p>
               </div>
-              <Select value={theme ?? "dark"} onValueChange={setTheme}>
+              <Select
+                value={mounted ? (theme ?? "dark") : "dark"}
+                onValueChange={setTheme}
+                disabled={!mounted}
+              >
                 <SelectTrigger className="w-32 bg-muted/50 border-border/50">
                   <SelectValue />
                 </SelectTrigger>

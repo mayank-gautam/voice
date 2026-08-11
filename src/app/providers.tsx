@@ -14,8 +14,20 @@ import { RouteLoadingListener } from "@/components/loading/RouteLoadingListener"
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
 
+  // React 19 warns about <script> rendered inside client components.
+  // Keep a real script on SSR (FOUC prevention); on the client use a
+  // non-JS type so React doesn't flag it. The SSR script already ran.
+  const themeScriptProps =
+    typeof window === "undefined" ? undefined : ({ type: "application/json" } as const);
+
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem storageKey="voiceai-theme">
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="dark"
+      enableSystem
+      storageKey="voiceai-theme"
+      scriptProps={themeScriptProps}
+    >
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <LoadingProvider>
