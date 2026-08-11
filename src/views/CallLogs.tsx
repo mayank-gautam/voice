@@ -40,6 +40,7 @@ import {
 } from "@/lib/get-active-credentials";
 import { clearSelectedCredentials } from "@/lib/credentials-store";
 import { inferServiceName } from "@/lib/serviceMapFromLogs";
+import { formatProjectNameDisplay } from "@/lib/formatProjectName";
 import { CallLogServiceMapModal } from "@/components/dashboard/call-analytics/CallLogServiceMapModal";
 
 type LogEvent = {
@@ -51,7 +52,7 @@ type LogEvent = {
   service?: string;
 };
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 200;
 
 function inferLevel(message: string, explicit?: string): "info" | "warn" | "error" | "debug" {
   if (explicit) {
@@ -288,7 +289,7 @@ const CallLogs = () => {
 
       const header = [
         `# CloudWatch logs for Call SID ${callId}`,
-        `# Project: ${active?.name || activeId || "—"}`,
+        `# Project: ${formatProjectNameDisplay(active?.name) || activeId || "—"}`,
         `# Exported: ${new Date().toISOString()}`,
         `# Events: ${allEvents.length}`,
         `# Columns: timestamp, level, service, logGroup, logStream, message`,
@@ -437,7 +438,7 @@ const CallLogs = () => {
                     <span className="font-mono text-foreground/80">{callId}</span>
                   </>
                 ) : null}
-                {active?.name ? ` · ${active.name}` : ""}
+                {active?.name ? ` · ${formatProjectNameDisplay(active.name)}` : ""}
                 {!loading && events.length > 0 ? (
                   <span className="text-muted-foreground/80">
                     {" "}

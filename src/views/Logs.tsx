@@ -1,8 +1,16 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -27,24 +35,17 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { useProjects } from "@/lib/projectConfig";
-import {
-  buildAwsCredentialHeaders,
-  getActiveCredentials,
-} from "@/lib/get-active-credentials";
 import { clearSelectedCredentials } from "@/lib/credentials-store";
 import { toast } from "sonner";
 import { inferServiceName } from "@/lib/serviceMapFromLogs";
+import { formatProjectNameDisplay } from "@/lib/formatProjectName";
+import {
+  fetchCallLogsChunk,
+  LOGS_CHUNK_SIZE,
+  type LogsApiEvent,
+} from "@/lib/logsApi";
 
-type LogEvent = {
-  timestamp: number;
-  message: string;
-  logStreamName: string;
-  logGroupName?: string;
-  level?: string;
-  service?: string;
-};
-
-const PAGE_SIZE = 100;
+type LogEvent = LogsApiEvent;
 
 function inferLevel(message: string, explicit?: string): "info" | "warn" | "error" | "debug" {
   if (explicit) {
@@ -114,11 +115,20 @@ const levelColors = {
   debug: "text-muted-foreground",
 };
 
+type EnrichedLog = LogEvent & {
+  level: "info" | "warn" | "error" | "debug";
+  service: string;
+  traceId: string;
+  displayMessage: string;
+  rowKey: string;
+};
+
 function LogsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlCallId = searchParams.get("callId")?.trim() || "";
   const { activeId, active, loading: projectsLoading } = useProjects();
+  const projectDisplay = formatProjectNameDisplay(active?.name);
 
   const [callIdInput, setCallIdInput] = useState(urlCallId);
   const [activeCallId, setActiveCallId] = useState(urlCallId);
@@ -130,6 +140,7 @@ function LogsContent() {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [configured, setConfigured] = useState(true);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -139,13 +150,32 @@ function LogsContent() {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingMoreRef = useRef(false);
   const eventsLenRef = useRef(0);
+  const hasMoreRef = useRef(false);
+  const requestGenRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
   const previousProjectRef = useRef<string | null | undefined>(undefined);
+  const activeProjectRef = useRef(activeId);
+
+  useEffect(() => {
+    activeProjectRef.current = activeId;
+  }, [activeId]);
+
+  useEffect(() => {
+    hasMoreRef.current = hasMore;
+  }, [hasMore]);
 
   useEffect(() => {
     setCallIdInput(urlCallId);
   }, [urlCallId]);
 
-  // Clear logs / Call ID filter when the authorized project changes.
+  const cancelInFlight = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    requestGenRef.current += 1;
+    loadingMoreRef.current = false;
+  }, []);
+
+  // Clear logs when the authorized project changes.
   useEffect(() => {
     if (previousProjectRef.current === undefined) {
       previousProjectRef.current = activeId;
@@ -154,10 +184,13 @@ function LogsContent() {
     if (previousProjectRef.current === activeId) return;
     previousProjectRef.current = activeId;
 
+    cancelInFlight();
     setEvents([]);
     eventsLenRef.current = 0;
     setHasMore(false);
+    hasMoreRef.current = false;
     setError(null);
+    setLoadMoreError(null);
     setExpandedKey(null);
     setSearched(false);
     setActiveCallId("");
@@ -165,40 +198,37 @@ function LogsContent() {
     setMessageFilter("");
     setLevelFilter("all");
     setServiceFilter("all");
+    setLoading(false);
+    setLoadingMore(false);
     if (urlCallId) {
       router.replace("/logs");
     }
-  }, [activeId, router, urlCallId]);
+  }, [activeId, router, urlCallId, cancelInFlight]);
 
   const fetchPage = useCallback(
-    async (callId: string, opts: { offset?: number; append: boolean }) => {
-      const creds = await getActiveCredentials();
-      if (creds.ok === false) {
-        await clearSelectedCredentials().catch(() => undefined);
-        toast.error(creds.message);
-        router.replace("/sso");
-        return;
-      }
+    async (
+      callId: string,
+      opts: { offset?: number; append: boolean },
+      gen: number,
+      signal: AbortSignal,
+    ) => {
+      const projectIdAtStart = activeProjectRef.current;
+      const result = await fetchCallLogsChunk({
+        callId,
+        projectId: projectIdAtStart,
+        offset: opts.offset ?? 0,
+        limit: LOGS_CHUNK_SIZE,
+        signal,
+      });
 
-      const params = new URLSearchParams();
-      params.set("limit", String(PAGE_SIZE));
-      params.set("offset", String(opts.offset ?? 0));
-      if (activeId) params.set("projectId", activeId);
+      if (gen !== requestGenRef.current) return;
+      if (activeProjectRef.current !== projectIdAtStart) return;
 
-      const res = await fetch(
-        `/api/calls/${encodeURIComponent(callId)}/logs?${params.toString()}`,
-        {
-          credentials: "include",
-          headers: buildAwsCredentialHeaders(creds.aws, creds.credentials.accountId),
-        },
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error?.message || "Failed to load logs");
+      setConfigured(result.configured);
+      setHasMore(result.hasMore);
+      hasMoreRef.current = result.hasMore;
 
-      setConfigured(data.configured !== false);
-      setHasMore(Boolean(data.hasMore));
-
-      const page: LogEvent[] = data.events || [];
+      const page = result.events;
       setEvents((prev) => {
         if (!opts.append) {
           eventsLenRef.current = page.length;
@@ -216,11 +246,11 @@ function LogsContent() {
         return merged;
       });
 
-      if (data.message && data.configured === false) setError(data.message);
-      else if (data.message && page.length === 0 && !opts.append) setError(data.message);
-      else setError(null);
+      if (result.message && result.configured === false) setError(result.message);
+      else if (result.message && page.length === 0 && !opts.append) setError(result.message);
+      else if (!opts.append) setError(null);
     },
-    [activeId, router]
+    [],
   );
 
   const loadForCallId = useCallback(
@@ -231,35 +261,52 @@ function LogsContent() {
         setEvents([]);
         eventsLenRef.current = 0;
         setHasMore(false);
+        hasMoreRef.current = false;
         setSearched(false);
         setActiveCallId("");
         return;
       }
 
+      cancelInFlight();
+      const gen = requestGenRef.current;
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       setSearched(true);
       setActiveCallId(callId);
       setLoading(true);
       setError(null);
+      setLoadMoreError(null);
       setExpandedKey(null);
       setHasMore(false);
+      hasMoreRef.current = false;
       setEvents([]);
       eventsLenRef.current = 0;
 
       try {
-        await fetchPage(callId, { offset: 0, append: false });
+        await fetchPage(callId, { offset: 0, append: false }, gen, controller.signal);
       } catch (e) {
+        if (gen !== requestGenRef.current) return;
+        if ((e as { name?: string })?.name === "AbortError") return;
+        const err = e as Error & { code?: string };
+        if (err.code === "AUTH_REQUIRED") {
+          await clearSelectedCredentials().catch(() => undefined);
+          toast.error(err.message);
+          router.replace("/sso");
+          return;
+        }
         setEvents([]);
         eventsLenRef.current = 0;
         setHasMore(false);
-        setError(e instanceof Error ? e.message : "Failed to load logs");
+        hasMoreRef.current = false;
+        setError(err.message || "Failed to load logs");
       } finally {
-        setLoading(false);
+        if (gen === requestGenRef.current) setLoading(false);
       }
     },
-    [fetchPage]
+    [cancelInFlight, fetchPage, router],
   );
 
-  // Load whenever URL callId or active project changes
   useEffect(() => {
     if (projectsLoading) return;
     if (!urlCallId) {
@@ -268,6 +315,7 @@ function LogsContent() {
       setEvents([]);
       eventsLenRef.current = 0;
       setHasMore(false);
+      hasMoreRef.current = false;
       setLoading(false);
       return;
     }
@@ -275,51 +323,85 @@ function LogsContent() {
   }, [urlCallId, activeId, loadForCallId, projectsLoading]);
 
   const loadMore = useCallback(async () => {
-    if (!activeCallId || !hasMore || loadingMoreRef.current || loading) {
+    if (
+      !activeCallId ||
+      !hasMoreRef.current ||
+      loadingMoreRef.current ||
+      loading ||
+      !activeProjectRef.current
+    ) {
       return;
     }
+
     loadingMoreRef.current = true;
     setLoadingMore(true);
-    try {
-      await fetchPage(activeCallId, { offset: eventsLenRef.current, append: true });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load more logs");
-    } finally {
-      setLoadingMore(false);
-      loadingMoreRef.current = false;
-    }
-  }, [activeCallId, fetchPage, hasMore, loading]);
+    setLoadMoreError(null);
 
+    const gen = requestGenRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const projectIdAtStart = activeProjectRef.current;
+    const offset = eventsLenRef.current;
+
+    try {
+      await fetchPage(
+        activeCallId,
+        { offset, append: true },
+        gen,
+        controller.signal,
+      );
+    } catch (e) {
+      if (gen !== requestGenRef.current) return;
+      if ((e as { name?: string })?.name === "AbortError") return;
+      if (activeProjectRef.current !== projectIdAtStart) return;
+      const err = e as Error & { code?: string };
+      if (err.code === "AUTH_REQUIRED") {
+        await clearSelectedCredentials().catch(() => undefined);
+        toast.error(err.message);
+        router.replace("/sso");
+        return;
+      }
+      setLoadMoreError(err.message || "Failed to load more logs");
+    } finally {
+      if (gen === requestGenRef.current) {
+        setLoadingMore(false);
+        loadingMoreRef.current = false;
+      }
+    }
+  }, [activeCallId, fetchPage, loading, router]);
+
+  // Prefetch next chunk ~70–80% before absolute bottom (large rootMargin).
   useEffect(() => {
     const root = scrollRef.current;
     const sentinel = sentinelRef.current;
-    if (!root || !sentinel) return;
+    if (!root || !sentinel || !searched || loading) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) void loadMore();
+        if (entries.some((entry) => entry.isIntersecting)) void loadMore();
       },
-      { root, rootMargin: "120px", threshold: 0 }
+      { root, rootMargin: "480px 0px", threshold: 0 },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loadMore, loading, events.length]);
+  }, [loadMore, loading, searched, events.length, hasMore]);
 
-  const enriched = useMemo(
+  const enriched = useMemo<EnrichedLog[]>(
     () =>
-      events.map((e) => ({
+      events.map((e, index) => ({
         ...e,
         level: inferLevel(e.message, e.level),
         service: inferService(e),
         traceId: extractTraceId(e.message, activeCallId || "—"),
         displayMessage: extractDisplayMessage(e.message),
+        rowKey: `${eventKey(e)}|${index}`,
       })),
-    [events, activeCallId]
+    [events, activeCallId],
   );
 
   const services = useMemo(
     () => [...new Set(enriched.map((l) => l.service))].sort(),
-    [enriched]
+    [enriched],
   );
 
   const filteredLogs = useMemo(() => {
@@ -338,6 +420,17 @@ function LogsContent() {
     });
   }, [enriched, messageFilter, levelFilter, serviceFilter]);
 
+  const rowVirtualizer = useVirtualizer({
+    count: filteredLogs.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 52,
+    overscan: 12,
+    measureElement:
+      typeof window !== "undefined" && navigator.userAgent.indexOf("Firefox") === -1
+        ? (el) => el.getBoundingClientRect().height
+        : undefined,
+  });
+
   const onSubmitSearch = (e?: React.FormEvent) => {
     e?.preventDefault();
     const callId = callIdInput.trim();
@@ -346,6 +439,10 @@ function LogsContent() {
       router.replace("/logs");
       return;
     }
+    // Client-side filters only apply to loaded chunks — reset them on new search.
+    setMessageFilter("");
+    setLevelFilter("all");
+    setServiceFilter("all");
     if (callId === urlCallId) {
       void loadForCallId(callId);
       return;
@@ -353,18 +450,25 @@ function LogsContent() {
     router.replace(`/logs?callId=${encodeURIComponent(callId)}`);
   };
 
+  const virtualItems = rowVirtualizer.getVirtualItems();
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
         <h1 className="text-2xl font-bold">Logs & Traces</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Search CloudWatch logs by Call SID
-          {active?.name ? ` · ${active.name}` : ""}
+          Search CloudWatch logs by Call SID for the current project
+          {projectDisplay ? (
+            <span className="text-foreground font-medium tracking-wide">
+              {" "}
+              · {projectDisplay}
+            </span>
+          ) : null}
           {searched && activeCallId && !loading && events.length > 0 ? (
             <span>
               {" "}
               · {events.length}
-              {hasMore ? "+" : ""} events
+              {hasMore ? "+" : ""} events · chunks of {LOGS_CHUNK_SIZE}
             </span>
           ) : null}
         </p>
@@ -386,7 +490,7 @@ function LogsContent() {
               spellCheck={false}
             />
           </div>
-          <Button type="submit" disabled={loading} className="gap-2 shrink-0">
+          <Button type="submit" disabled={loading || projectsLoading} className="gap-2 shrink-0">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
             Search
           </Button>
@@ -406,6 +510,13 @@ function LogsContent() {
           <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             <span>
               Showing logs for <span className="font-mono text-foreground">{activeCallId}</span>
+              {projectDisplay ? (
+                <>
+                  {" "}
+                  · project{" "}
+                  <span className="font-medium tracking-wide text-foreground">{projectDisplay}</span>
+                </>
+              ) : null}
             </span>
             <Link
               href={`/calls/${encodeURIComponent(activeCallId)}`}
@@ -421,9 +532,18 @@ function LogsContent() {
         <div className="text-xs text-chart-warning border border-chart-warning/30 bg-chart-warning/10 rounded-lg px-3 py-2 space-y-1">
           <p>{error}</p>
           {!configured && (
-            <Link href="/settings" className="underline text-primary">
-              Open project settings
-            </Link>
+            <p className="text-muted-foreground">
+              Ensure the current project is mapped in account-hierarchy for ECS/Lambda log groups.
+            </p>
+          )}
+          {activeCallId && (
+            <button
+              type="button"
+              className="underline text-primary"
+              onClick={() => void loadForCallId(activeCallId)}
+            >
+              Retry
+            </button>
           )}
         </div>
       )}
@@ -482,101 +602,125 @@ function LogsContent() {
         </div>
         <div
           ref={scrollRef}
-          className="divide-y divide-border/30 max-h-[600px] overflow-y-auto scrollbar-thin"
+          className="max-h-[600px] overflow-y-auto scrollbar-thin relative"
         >
           {!searched && !loading && (
             <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
               <Search className="w-8 h-8 opacity-40" />
               <p className="text-sm">Enter a Call SID above to load CloudWatch logs.</p>
+              {projectDisplay ? (
+                <p className="text-xs tracking-wide">Current project: {projectDisplay}</p>
+              ) : null}
             </div>
           )}
 
           {loading && (
             <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
               <Loader2 className="w-7 h-7 animate-spin text-primary" />
-              <p className="text-sm">Fetching logs for {activeCallId || "call"}…</p>
+              <p className="text-sm">
+                Fetching first {LOGS_CHUNK_SIZE} logs
+                {projectDisplay ? ` for ${projectDisplay}` : ""}…
+              </p>
             </div>
           )}
 
           {searched && !loading && filteredLogs.length === 0 && !error && (
             <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
               <AlertCircle className="w-8 h-8 opacity-50" />
-              <p className="text-sm">No log events for this Call SID.</p>
+              <p className="text-sm">
+                {events.length === 0
+                  ? "No log events for this Call SID."
+                  : "No loaded events match the current filters."}
+              </p>
             </div>
           )}
 
-          {!loading &&
-            filteredLogs.map((log, index) => {
-              const Icon = levelIcons[log.level] || Info;
-              const rowKey = `${log.timestamp}-${index}-${log.logStreamName}`;
-              const isOpen = expandedKey === rowKey;
+          {!loading && filteredLogs.length > 0 && (
+            <div
+              style={{
+                height: `${rowVirtualizer.getTotalSize()}px`,
+                width: "100%",
+                position: "relative",
+              }}
+            >
+              {virtualItems.map((virtualRow) => {
+                const log = filteredLogs[virtualRow.index];
+                if (!log) return null;
+                const Icon = levelIcons[log.level] || Info;
+                const isOpen = expandedKey === log.rowKey;
 
-              return (
-                <div
-                  key={rowKey}
-                  className={cn(
-                    log.level === "error" && "bg-destructive/5",
-                    log.level === "warn" && "bg-warning/5"
-                  )}
-                >
-                  <button
-                    type="button"
-                    aria-expanded={isOpen}
-                    onClick={() => setExpandedKey(isOpen ? null : rowKey)}
-                    className={cn(
-                      "w-full text-left grid grid-cols-12 gap-4 p-3 text-sm hover:bg-muted/30 transition-colors cursor-pointer",
-                      isOpen && "bg-muted/40"
-                    )}
-                  >
-                    <div className="col-span-2 font-mono text-xs text-muted-foreground flex items-center gap-1.5 min-w-0">
-                      <ChevronDown
-                        className={cn(
-                          "w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
-                          isOpen && "rotate-180"
-                        )}
-                      />
-                      <span className="truncate">
-                        {log.timestamp ? format(new Date(log.timestamp), "HH:mm:ss.SSS") : "—"}
-                      </span>
-                    </div>
-                    <div className="col-span-1 flex items-center">
-                      <div className={cn("inline-flex items-center gap-1.5", levelColors[log.level])}>
-                        <Icon className="w-3.5 h-3.5" />
-                        <span className="text-xs uppercase">{log.level}</span>
-                      </div>
-                    </div>
-                    <div className="col-span-2 flex items-center min-w-0">
-                      <span className="px-2 py-0.5 text-xs bg-secondary rounded-md truncate">
-                        {log.service}
-                      </span>
-                    </div>
-                    <div className="col-span-5 truncate self-center" title={log.displayMessage}>
-                      {log.displayMessage}
-                    </div>
-                    <div
-                      className="col-span-2 font-mono text-xs text-primary truncate self-center"
-                      title={log.traceId}
-                    >
-                      {log.traceId}
-                    </div>
-                  </button>
-
+                return (
                   <div
+                    key={log.rowKey}
+                    data-index={virtualRow.index}
+                    ref={rowVirtualizer.measureElement}
                     className={cn(
-                      "grid transition-[grid-template-rows] duration-200 ease-out",
-                      isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                      "absolute top-0 left-0 w-full border-b border-border/30",
+                      log.level === "error" && "bg-destructive/5",
+                      log.level === "warn" && "bg-warning/5",
                     )}
+                    style={{ transform: `translateY(${virtualRow.start}px)` }}
                   >
-                    <div className="overflow-hidden">
+                    <button
+                      type="button"
+                      aria-expanded={isOpen}
+                      onClick={() => setExpandedKey(isOpen ? null : log.rowKey)}
+                      className={cn(
+                        "w-full text-left grid grid-cols-12 gap-4 p-3 text-sm hover:bg-muted/30 transition-colors cursor-pointer",
+                        isOpen && "bg-muted/40",
+                      )}
+                    >
+                      <div className="col-span-2 font-mono text-xs text-muted-foreground flex items-center gap-1.5 min-w-0">
+                        <ChevronDown
+                          className={cn(
+                            "w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+                            isOpen && "rotate-180",
+                          )}
+                        />
+                        <span className="truncate">
+                          {log.timestamp ? format(new Date(log.timestamp), "HH:mm:ss.SSS") : "—"}
+                        </span>
+                      </div>
+                      <div className="col-span-1 flex items-center">
+                        <div className={cn("inline-flex items-center gap-1.5", levelColors[log.level])}>
+                          <Icon className="w-3.5 h-3.5" />
+                          <span className="text-xs uppercase">{log.level}</span>
+                        </div>
+                      </div>
+                      <div className="col-span-2 flex items-center min-w-0">
+                        <span className="px-2 py-0.5 text-xs bg-secondary rounded-md truncate">
+                          {log.service}
+                        </span>
+                      </div>
+                      <div className="col-span-5 truncate self-center" title={log.displayMessage}>
+                        {log.displayMessage}
+                      </div>
+                      <div
+                        className="col-span-2 font-mono text-xs text-primary truncate self-center"
+                        title={log.traceId}
+                      >
+                        {log.traceId}
+                      </div>
+                    </button>
+
+                    {isOpen && (
                       <div className="px-3 pb-3 pt-0 space-y-2 border-t border-border/20 bg-muted/20">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 text-[11px] text-muted-foreground font-mono">
+                          <div className="min-w-0">
+                            <span className="text-muted-foreground/70 uppercase tracking-wide text-[10px]">
+                              Project
+                            </span>
+                            <p className="tracking-wide">
+                              {projectDisplay || "—"}
+                            </p>
+                          </div>
                           <div className="min-w-0">
                             <span className="text-muted-foreground/70 uppercase tracking-wide text-[10px]">
                               Log group
                             </span>
                             <p className="break-all">{log.logGroupName || "—"}</p>
                           </div>
-                          <div className="min-w-0">
+                          <div className="min-w-0 sm:col-span-2">
                             <span className="text-muted-foreground/70 uppercase tracking-wide text-[10px]">
                               Log stream
                             </span>
@@ -592,31 +736,37 @@ function LogsContent() {
                           </pre>
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+          )}
 
-          {!loading && filteredLogs.length > 0 && (
+          {!loading && (filteredLogs.length > 0 || (hasMore && events.length > 0)) && (
             <div ref={sentinelRef} className="py-3 flex flex-col items-center justify-center gap-1">
               {loadingMore && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                  Loading more logs…
+                  Loading next {LOGS_CHUNK_SIZE} logs…
                 </div>
               )}
-              {!loadingMore && hasMore && (
-                <button
-                  type="button"
-                  className="text-xs text-primary hover:underline"
-                  onClick={() => void loadMore()}
-                >
-                  Load more
-                </button>
+              {loadMoreError && !loadingMore && (
+                <div className="flex flex-col items-center gap-1 text-xs text-chart-warning">
+                  <p>{loadMoreError}</p>
+                  <button
+                    type="button"
+                    className="text-primary hover:underline"
+                    onClick={() => void loadMore()}
+                  >
+                    Retry
+                  </button>
+                </div>
               )}
-              {!loadingMore && !hasMore && (
-                <p className="text-[11px] text-muted-foreground">End of logs for this Call SID</p>
+              {!loadingMore && !loadMoreError && !hasMore && filteredLogs.length > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  You&apos;ve reached the end of logs for this Call SID
+                </p>
               )}
             </div>
           )}

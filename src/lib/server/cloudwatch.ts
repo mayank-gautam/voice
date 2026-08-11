@@ -48,7 +48,7 @@ export type LogEvent = {
 /** @deprecated Use DEFAULT_CLOUDWATCH_INSIGHTS_FILTER — kept for existing imports. */
 export const DEFAULT_LOGS_QUERY = DEFAULT_CLOUDWATCH_INSIGHTS_FILTER;
 
-export const DEFAULT_PAGE_SIZE = 100;
+export const DEFAULT_PAGE_SIZE = 200;
 export const MAX_PAGE_SIZE = 500;
 /** CloudWatch Logs Insights hard max — used by "Load all". */
 export const ALL_LOGS_LIMIT = 10000;

@@ -13,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Check, ChevronsUpDown, FolderKanban, Settings2 } from "lucide-react";
 import { toast } from "sonner";
+import { formatProjectNameDisplay } from "@/lib/formatProjectName";
 import { useProjects } from "@/lib/projectConfig";
 import { useGlobalLoading } from "@/lib/loading";
 
@@ -55,12 +56,14 @@ export const ProjectSwitcher = () => {
     );
   }
 
+  const activeLabel = formatProjectNameDisplay(active?.name) || "SELECT PROJECT";
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" className="gap-2 border-border/50 max-w-[220px]">
           <FolderKanban className="w-4 h-4 text-primary shrink-0" />
-          <span className="truncate">{active?.name ?? "Select project"}</span>
+          <span className="truncate tracking-wide">{activeLabel}</span>
           <ChevronsUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         </Button>
       </DropdownMenuTrigger>
@@ -79,9 +82,9 @@ export const ProjectSwitcher = () => {
                   async () => {
                     await setActiveProject(p.id);
                   },
-                  `Switching to ${p.name}…`,
+                  `Switching to ${formatProjectNameDisplay(p.name)}…`,
                 );
-                toast.success(`Switched to ${p.name}`);
+                toast.success(`Switched to ${formatProjectNameDisplay(p.name)}`);
               } catch (e) {
                 toast.error(e instanceof Error ? e.message : "Unable to switch project");
               }
@@ -89,7 +92,9 @@ export const ProjectSwitcher = () => {
             className="gap-2"
           >
             <Check className={`w-4 h-4 ${p.id === activeId ? "opacity-100 text-primary" : "opacity-0"}`} />
-            <span className="flex-1 truncate">{p.name}</span>
+            <span className="flex-1 truncate tracking-wide">
+              {formatProjectNameDisplay(p.name)}
+            </span>
             {p.hasTwilio === false && (
               <Badge variant="outline" className="text-[10px]">
                 No Twilio

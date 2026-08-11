@@ -7,6 +7,7 @@ import { FolderKanban, Check } from "lucide-react";
 import { toast } from "sonner";
 import { useProjects } from "@/lib/projectConfig";
 import { useGlobalLoading } from "@/lib/loading";
+import { formatProjectNameDisplay } from "@/lib/formatProjectName";
 
 /**
  * App Settings: shows projects from account-hierarchy for the current AWS account.
@@ -42,7 +43,9 @@ export const ProjectSettingsCard = () => {
           <div key={p.id} className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-2">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">{p.name}</span>
+                <span className="text-sm font-medium tracking-wide">
+                  {formatProjectNameDisplay(p.name)}
+                </span>
                 <Badge variant="outline" className="text-[10px] font-mono">
                   {p.id}
                 </Badge>
@@ -71,9 +74,9 @@ export const ProjectSettingsCard = () => {
                         async () => {
                           await setActiveProject(p.id);
                         },
-                        `Switching to ${p.name}…`,
+                        `Switching to ${formatProjectNameDisplay(p.name)}…`,
                       );
-                      toast.success(`Switched to ${p.name}`);
+                      toast.success(`Switched to ${formatProjectNameDisplay(p.name)}`);
                     } catch (e) {
                       toast.error(e instanceof Error ? e.message : "Unable to switch project");
                     }
