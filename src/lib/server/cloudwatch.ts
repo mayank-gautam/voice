@@ -185,15 +185,15 @@ export type InsightsQueryOpts = {
 };
 
 /** Build Insights query used by the Fastify-style ECS logs path. */
-export function getLogQuery(callSid: string, pageSize: number): string {
-  const safeId = escapeRegExp(callSid.trim());
+export function getLogQuery(callSid: string | null | undefined, pageSize: number): string {
   const limit = Math.min(Math.max(pageSize, 1), ALL_LOGS_LIMIT);
-  return [
-    "fields @timestamp, @message, @logStream, @log",
-    `| filter @message like /${safeId}/`,
-    "| sort @timestamp asc",
-    `| limit ${limit}`,
-  ].join("\n");
+  const parts = ["fields @timestamp, @message, @logStream, @log"];
+  const trimmed = callSid?.trim();
+  if (trimmed) {
+    parts.push(`| filter @message like /${escapeRegExp(trimmed)}/`);
+  }
+  parts.push("| sort @timestamp asc", `| limit ${limit}`);
+  return parts.join("\n");
 }
 
 /** Build Insights query; always injects the open page Call SID into `{callId}` / `{CallSid}`. */
@@ -364,16 +364,10 @@ function parseInsightsRows(rows: InsightsRow[]): LogEvent[] {
           ? LEVEL_MAP[String(levelValue)] || String(levelValue)
           : undefined;
 
-      const displayMessage =
-        typeof log.msg === "string" && log.msg.trim()
-          ? log.msg
-          : typeof log.message === "string" && log.message.trim()
-            ? log.message
-            : messageRaw;
-
       return {
         timestamp,
-        message: displayMessage || messageRaw,
+        // Keep raw CloudWatch @message so the UI can show full JSON + extract display text.
+        message: messageRaw,
         logStreamName,
         logGroupName: logGroupRaw,
         service,
@@ -395,27 +389,7 @@ function eventKey(e: LogEvent): string {
   return `${e.timestamp}|${e.logStreamName}|${e.logGroupName || ""}|${e.message}`;
 }
 
-export async function fetchLogsForCall(
-  project: ProjectConfig,
-  callSid: string,
-  credentials: AwsCredentialHeaders,
-  opts?: {
-    start?: number;
-    end?: number;
-    /** Page size returned to client (default 100). */
-    limit?: number;
-    /**
-     * Number of events to skip (offset-based pagination).
-     * Insights has no OFFSET — we fetch a window and slice.
-     */
-    offset?: number;
-    /**
-     * Fastify-style cursor: previous page's last raw @timestamp.
-     * When set, Insights startTime begins at this cursor.
-     */
-    cursor?: string | null;
-  },
-): Promise<{
+export type FetchLogsResult = {
   configured: boolean;
   events: LogEvent[];
   logGroups?: string[];
@@ -426,18 +400,37 @@ export async function fetchLogsForCall(
   hasMore?: boolean;
   pageSize?: number;
   tenantId?: string;
-}> {
-  if (!callSid?.trim()) {
-    return {
-      configured: true,
-      events: [],
-      hasMore: false,
-      nextOffset: 0,
-      nextCursor: null,
-      message: "Call ID is required to filter logs.",
-    };
-  }
+  callSid?: string | null;
+};
 
+export type FetchLogsOpts = {
+  start?: number;
+  end?: number;
+  /** Page size returned to client (default 200). */
+  limit?: number;
+  /**
+   * Number of events to skip (offset-based pagination).
+   * Insights has no OFFSET — we fetch a window and slice.
+   */
+  offset?: number;
+  /**
+   * Fastify-style cursor: previous page's last raw @timestamp.
+   * When set, Insights startTime begins at this cursor.
+   */
+  cursor?: string | null;
+};
+
+/**
+ * Fetch CloudWatch logs for the current project tenant.
+ * When `callSid` is set, filters Insights `@message` by that Call SID (Fastify `getLogQuery`).
+ * When omitted, returns all matching ECS/Lambda project logs.
+ */
+export async function fetchLogs(
+  project: ProjectConfig,
+  credentials: AwsCredentialHeaders,
+  opts?: FetchLogsOpts & { callSid?: string | null },
+): Promise<FetchLogsResult> {
+  const callSid = opts?.callSid?.trim() || null;
   const pageSize = Math.min(
     Math.max(opts?.limit ?? DEFAULT_PAGE_SIZE, 1),
     ALL_LOGS_LIMIT,
@@ -453,6 +446,7 @@ export async function fetchLogsForCall(
       nextOffset: offset,
       nextCursor: null,
       pageSize,
+      callSid,
       message: `Invalid account/project "${project.id}". No tenant mapping for ECS/Lambda log filter.`,
     };
   }
@@ -480,6 +474,7 @@ export async function fetchLogsForCall(
         nextCursor: null,
         pageSize,
         tenantId,
+        callSid,
         message: "Invalid cursor",
       };
     }
@@ -502,6 +497,7 @@ export async function fetchLogsForCall(
       nextCursor: null,
       pageSize,
       tenantId,
+      callSid,
       message: `No /ecs or /aws/lambda log groups matched keywords [${BASE_LOG_KEYWORDS.join(", ")}, ${tenantId}] for project ${project.id}.`,
     };
   }
@@ -543,5 +539,16 @@ export async function fetchLogsForCall(
     hasMore,
     pageSize,
     tenantId,
+    callSid,
   };
+}
+
+/** @deprecated Prefer `fetchLogs({ callSid })` — kept for existing call-detail routes. */
+export async function fetchLogsForCall(
+  project: ProjectConfig,
+  callSid: string,
+  credentials: AwsCredentialHeaders,
+  opts?: FetchLogsOpts,
+): Promise<FetchLogsResult> {
+  return fetchLogs(project, credentials, { ...opts, callSid });
 }

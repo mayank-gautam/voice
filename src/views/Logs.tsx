@@ -40,7 +40,7 @@ import { toast } from "sonner";
 import { inferServiceName } from "@/lib/serviceMapFromLogs";
 import { formatProjectNameDisplay } from "@/lib/formatProjectName";
 import {
-  fetchCallLogsChunk,
+  fetchLogsChunk,
   LOGS_CHUNK_SIZE,
   type LogsApiEvent,
 } from "@/lib/logsApi";
@@ -144,7 +144,8 @@ function LogsContent() {
   const [configured, setConfigured] = useState(true);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
-  const [searched, setSearched] = useState(Boolean(urlCallId));
+  /** True after the first load attempt for the current project / call filter. */
+  const [searched, setSearched] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -175,7 +176,7 @@ function LogsContent() {
     loadingMoreRef.current = false;
   }, []);
 
-  // Clear logs when the authorized project changes.
+  // Clear logs when the authorized project changes; effect below reloads for the new project.
   useEffect(() => {
     if (previousProjectRef.current === undefined) {
       previousProjectRef.current = activeId;
@@ -192,9 +193,6 @@ function LogsContent() {
     setError(null);
     setLoadMoreError(null);
     setExpandedKey(null);
-    setSearched(false);
-    setActiveCallId("");
-    setCallIdInput("");
     setMessageFilter("");
     setLevelFilter("all");
     setServiceFilter("all");
@@ -202,19 +200,23 @@ function LogsContent() {
     setLoadingMore(false);
     if (urlCallId) {
       router.replace("/logs");
+    } else {
+      setActiveCallId("");
+      setCallIdInput("");
+      setSearched(false);
     }
   }, [activeId, router, urlCallId, cancelInFlight]);
 
   const fetchPage = useCallback(
     async (
-      callId: string,
+      callId: string | null,
       opts: { offset?: number; append: boolean },
       gen: number,
       signal: AbortSignal,
     ) => {
       const projectIdAtStart = activeProjectRef.current;
-      const result = await fetchCallLogsChunk({
-        callId,
+      const result = await fetchLogsChunk({
+        callId: callId || null,
         projectId: projectIdAtStart,
         offset: opts.offset ?? 0,
         limit: LOGS_CHUNK_SIZE,
@@ -253,19 +255,9 @@ function LogsContent() {
     [],
   );
 
-  const loadForCallId = useCallback(
-    async (rawCallId: string) => {
-      const callId = rawCallId.trim();
-      if (!callId) {
-        setError("Enter a Call SID / Call ID to search logs.");
-        setEvents([]);
-        eventsLenRef.current = 0;
-        setHasMore(false);
-        hasMoreRef.current = false;
-        setSearched(false);
-        setActiveCallId("");
-        return;
-      }
+  const loadLogs = useCallback(
+    async (rawCallId?: string | null) => {
+      const callId = (rawCallId ?? "").trim();
 
       cancelInFlight();
       const gen = requestGenRef.current;
@@ -284,7 +276,7 @@ function LogsContent() {
       eventsLenRef.current = 0;
 
       try {
-        await fetchPage(callId, { offset: 0, append: false }, gen, controller.signal);
+        await fetchPage(callId || null, { offset: 0, append: false }, gen, controller.signal);
       } catch (e) {
         if (gen !== requestGenRef.current) return;
         if ((e as { name?: string })?.name === "AbortError") return;
@@ -309,7 +301,8 @@ function LogsContent() {
 
   useEffect(() => {
     if (projectsLoading) return;
-    if (!urlCallId) {
+    if (!activeId) {
+      cancelInFlight();
       setSearched(false);
       setActiveCallId("");
       setEvents([]);
@@ -317,14 +310,14 @@ function LogsContent() {
       setHasMore(false);
       hasMoreRef.current = false;
       setLoading(false);
+      setError(null);
       return;
     }
-    void loadForCallId(urlCallId);
-  }, [urlCallId, activeId, loadForCallId, projectsLoading]);
+    void loadLogs(urlCallId || null);
+  }, [urlCallId, activeId, loadLogs, projectsLoading, cancelInFlight]);
 
   const loadMore = useCallback(async () => {
     if (
-      !activeCallId ||
       !hasMoreRef.current ||
       loadingMoreRef.current ||
       loading ||
@@ -345,7 +338,7 @@ function LogsContent() {
 
     try {
       await fetchPage(
-        activeCallId,
+        activeCallId || null,
         { offset, append: true },
         gen,
         controller.signal,
@@ -434,17 +427,20 @@ function LogsContent() {
   const onSubmitSearch = (e?: React.FormEvent) => {
     e?.preventDefault();
     const callId = callIdInput.trim();
-    if (!callId) {
-      setError("Enter a Call SID / Call ID to search logs.");
-      router.replace("/logs");
-      return;
-    }
     // Client-side filters only apply to loaded chunks — reset them on new search.
     setMessageFilter("");
     setLevelFilter("all");
     setServiceFilter("all");
+    if (!callId) {
+      if (urlCallId) {
+        router.replace("/logs");
+        return;
+      }
+      void loadLogs(null);
+      return;
+    }
     if (callId === urlCallId) {
-      void loadForCallId(callId);
+      void loadLogs(callId);
       return;
     }
     router.replace(`/logs?callId=${encodeURIComponent(callId)}`);
@@ -457,18 +453,19 @@ function LogsContent() {
       <div>
         <h1 className="text-2xl font-bold">Logs & Traces</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Search CloudWatch logs by Call SID for the current project
+          CloudWatch logs for the current project
           {projectDisplay ? (
             <span className="text-foreground font-medium tracking-wide">
               {" "}
               · {projectDisplay}
             </span>
           ) : null}
-          {searched && activeCallId && !loading && events.length > 0 ? (
+          {searched && !loading && events.length > 0 ? (
             <span>
               {" "}
               · {events.length}
               {hasMore ? "+" : ""} events · chunks of {LOGS_CHUNK_SIZE}
+              {activeCallId ? " · filtered by Call SID" : ""}
             </span>
           ) : null}
         </p>
@@ -482,7 +479,7 @@ function LogsContent() {
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Enter Call SID / Call ID (e.g. CAxxxxxxxx…)"
+              placeholder="Filter by Call SID / Call ID (optional)"
               value={callIdInput}
               onChange={(e) => setCallIdInput(e.target.value)}
               className="pl-9 bg-background/50 border-border/50 font-mono text-sm"
@@ -492,24 +489,30 @@ function LogsContent() {
           </div>
           <Button type="submit" disabled={loading || projectsLoading} className="gap-2 shrink-0">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-            Search
+            {callIdInput.trim() ? "Search" : "Load all"}
           </Button>
           <Button
             type="button"
             variant="outline"
             size="icon"
             className="border-border/50 shrink-0"
-            disabled={!activeCallId || loading || loadingMore}
-            onClick={() => void loadForCallId(activeCallId || callIdInput)}
+            disabled={loading || loadingMore || projectsLoading || !activeId}
+            onClick={() => void loadLogs(activeCallId || callIdInput || null)}
           >
             <RefreshCw className={cn("w-4 h-4", (loading || loadingMore) && "animate-spin")} />
           </Button>
         </div>
 
-        {searched && activeCallId && (
+        {searched && (
           <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             <span>
-              Showing logs for <span className="font-mono text-foreground">{activeCallId}</span>
+              {activeCallId ? (
+                <>
+                  Showing logs for <span className="font-mono text-foreground">{activeCallId}</span>
+                </>
+              ) : (
+                <>Showing all project logs</>
+              )}
               {projectDisplay ? (
                 <>
                   {" "}
@@ -518,12 +521,14 @@ function LogsContent() {
                 </>
               ) : null}
             </span>
-            <Link
-              href={`/calls/${encodeURIComponent(activeCallId)}`}
-              className="inline-flex items-center gap-1 text-primary hover:underline"
-            >
-              Open call detail <ExternalLink className="w-3 h-3" />
-            </Link>
+            {activeCallId ? (
+              <Link
+                href={`/calls/${encodeURIComponent(activeCallId)}`}
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+              >
+                Open call detail <ExternalLink className="w-3 h-3" />
+              </Link>
+            ) : null}
           </div>
         )}
       </form>
@@ -536,15 +541,13 @@ function LogsContent() {
               Ensure the current project is mapped in account-hierarchy for ECS/Lambda log groups.
             </p>
           )}
-          {activeCallId && (
-            <button
-              type="button"
-              className="underline text-primary"
-              onClick={() => void loadForCallId(activeCallId)}
-            >
-              Retry
-            </button>
-          )}
+          <button
+            type="button"
+            className="underline text-primary"
+            onClick={() => void loadLogs(activeCallId || null)}
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -607,7 +610,11 @@ function LogsContent() {
           {!searched && !loading && (
             <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
               <Search className="w-8 h-8 opacity-40" />
-              <p className="text-sm">Enter a Call SID above to load CloudWatch logs.</p>
+              <p className="text-sm">
+                {activeId
+                  ? "Logs will load for the current project."
+                  : "No project selected — choose one from the header to load logs."}
+              </p>
               {projectDisplay ? (
                 <p className="text-xs tracking-wide">Current project: {projectDisplay}</p>
               ) : null}
@@ -619,7 +626,8 @@ function LogsContent() {
               <Loader2 className="w-7 h-7 animate-spin text-primary" />
               <p className="text-sm">
                 Fetching first {LOGS_CHUNK_SIZE} logs
-                {projectDisplay ? ` for ${projectDisplay}` : ""}…
+                {activeCallId ? ` for ${activeCallId}` : projectDisplay ? ` for ${projectDisplay}` : ""}
+                …
               </p>
             </div>
           )}
@@ -629,7 +637,9 @@ function LogsContent() {
               <AlertCircle className="w-8 h-8 opacity-50" />
               <p className="text-sm">
                 {events.length === 0
-                  ? "No log events for this Call SID."
+                  ? activeCallId
+                    ? "No log events for this Call SID."
+                    : "No log events for this project."
                   : "No loaded events match the current filters."}
               </p>
             </div>
@@ -765,7 +775,8 @@ function LogsContent() {
               )}
               {!loadingMore && !loadMoreError && !hasMore && filteredLogs.length > 0 && (
                 <p className="text-[11px] text-muted-foreground">
-                  You&apos;ve reached the end of logs for this Call SID
+                  You&apos;ve reached the end of
+                  {activeCallId ? " logs for this Call SID" : " project logs"}
                 </p>
               )}
             </div>

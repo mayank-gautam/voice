@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiError,
+import {
+  apiError,
   parseAwsCredentialHeaders,
   requireAuth,
   resolveProjectId,
-  validateSelectedAccount, isAuthOk } from "@/lib/server/api";
+  validateSelectedAccount,
+  isAuthOk,
+} from "@/lib/server/api";
 import { getDecryptedActiveProject } from "@/lib/server/projectStore";
 import {
   ALL_LOGS_LIMIT,
@@ -12,10 +15,12 @@ import {
   fetchLogs,
 } from "@/lib/server/cloudwatch";
 
-type Ctx = { params: Promise<{ id: string }> };
-
-/** GET /api/calls/[id]/logs — CloudWatch logs filtered to this Call SID. */
-export async function GET(request: NextRequest, ctx: Ctx) {
+/**
+ * GET /api/logs
+ * Fetch CloudWatch logs for the current user's active project (tenant-scoped).
+ * Optional `callId` query filters to a single Call SID (same as /api/calls/[id]/logs).
+ */
+export async function GET(request: NextRequest) {
   const auth = await requireAuth();
   if (!isAuthOk(auth)) return auth.response;
 
@@ -34,10 +39,6 @@ export async function GET(request: NextRequest, ctx: Ctx) {
     );
   }
 
-  const { id } = await ctx.params;
-  const callSid = id?.trim();
-  if (!callSid) return apiError("Call ID is required", 400, "CALL_ID_REQUIRED");
-
   const projectId = await resolveProjectId(request.nextUrl.searchParams);
   const project = await getDecryptedActiveProject(projectId, {
     accountId: auth.accountId,
@@ -46,6 +47,7 @@ export async function GET(request: NextRequest, ctx: Ctx) {
   if (!project) return apiError("No project configured", 400, "NO_PROJECT");
 
   const sp = request.nextUrl.searchParams;
+  const callId = sp.get("callId")?.trim() || null;
   const start = sp.get("start");
   const end = sp.get("end");
   const offsetRaw = sp.get("offset");
@@ -72,7 +74,7 @@ export async function GET(request: NextRequest, ctx: Ctx) {
         region: awsCredentials.region || project.aws.region || "us-east-1",
       },
       {
-        callSid,
+        callSid: callId,
         start: start ? Number(start) : undefined,
         end: end ? Number(end) : undefined,
         limit,
@@ -81,7 +83,7 @@ export async function GET(request: NextRequest, ctx: Ctx) {
       },
     );
     return NextResponse.json({
-      callSid,
+      callSid: callId,
       projectId: project.id,
       ...result,
     });
