@@ -34,7 +34,6 @@ import {
 import { clearSelectedCredentials } from "@/lib/credentials-store";
 import { toast } from "sonner";
 import { inferServiceName } from "@/lib/serviceMapFromLogs";
-import { useGlobalLoading } from "@/lib/loading";
 
 type LogEvent = {
   timestamp: number;
@@ -110,7 +109,6 @@ function LogsContent() {
   const searchParams = useSearchParams();
   const urlCallId = searchParams.get("callId")?.trim() || "";
   const { activeId, active, loading: projectsLoading } = useProjects();
-  const { startLoading, stopLoading } = useGlobalLoading();
 
   const [callIdInput, setCallIdInput] = useState(urlCallId);
   const [activeCallId, setActiveCallId] = useState(urlCallId);
@@ -236,11 +234,6 @@ function LogsContent() {
       setHasMore(false);
       setEvents([]);
       eventsLenRef.current = 0;
-      startLoading(
-        active?.name
-          ? `Fetching CloudWatch logs for ${active.name}…`
-          : "Fetching CloudWatch logs…",
-      );
 
       try {
         await fetchPage(callId, { offset: 0, append: false });
@@ -251,10 +244,9 @@ function LogsContent() {
         setError(e instanceof Error ? e.message : "Failed to load logs");
       } finally {
         setLoading(false);
-        stopLoading();
       }
     },
-    [active?.name, fetchPage, startLoading, stopLoading]
+    [fetchPage]
   );
 
   // Load whenever URL callId or active project changes

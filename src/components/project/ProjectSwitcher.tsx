@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
-import { Check, ChevronsUpDown, FolderKanban, Plus, Settings2 } from "lucide-react";
+import { Check, ChevronsUpDown, FolderKanban, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { useProjects } from "@/lib/projectConfig";
 import { useGlobalLoading } from "@/lib/loading";
@@ -19,9 +19,10 @@ import { useGlobalLoading } from "@/lib/loading";
 export const ProjectSwitcher = () => {
   const router = useRouter();
   const { projects, activeId, active, loading, error, setActiveProject } = useProjects();
-  const { withLoading } = useGlobalLoading();
+  const { withLoading, isLoading: globalLoading } = useGlobalLoading();
 
   if (loading) {
+    if (globalLoading) return null;
     return (
       <Button variant="outline" size="sm" className="gap-2" disabled>
         <FolderKanban className="w-4 h-4 text-muted-foreground" />
@@ -36,8 +37,8 @@ export const ProjectSwitcher = () => {
         variant="outline"
         size="sm"
         className="gap-2 max-w-[240px] text-destructive"
-        onClick={() => router.push("/project-setup")}
         title={error}
+        disabled
       >
         <FolderKanban className="w-4 h-4" />
         <span className="truncate">Projects unavailable</span>
@@ -47,9 +48,9 @@ export const ProjectSwitcher = () => {
 
   if (projects.length === 0) {
     return (
-      <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push("/project-setup")}>
-        <Plus className="w-4 h-4" />
-        Configure project
+      <Button variant="outline" size="sm" className="gap-2" disabled>
+        <FolderKanban className="w-4 h-4" />
+        No projects
       </Button>
     );
   }
@@ -65,7 +66,7 @@ export const ProjectSwitcher = () => {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64 bg-popover z-50">
         <DropdownMenuLabel className="text-xs">
-          Projects for current AWS role
+          Projects for current AWS account
         </DropdownMenuLabel>
         {projects.map((p) => (
           <DropdownMenuItem
@@ -89,17 +90,16 @@ export const ProjectSwitcher = () => {
           >
             <Check className={`w-4 h-4 ${p.id === activeId ? "opacity-100 text-primary" : "opacity-0"}`} />
             <span className="flex-1 truncate">{p.name}</span>
-            <Badge variant="outline" className="text-[10px] capitalize">
-              {p.environment}
-            </Badge>
+            {p.hasTwilio === false && (
+              <Badge variant="outline" className="text-[10px]">
+                No Twilio
+              </Badge>
+            )}
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => router.push("/project-setup")} className="gap-2">
-          <Plus className="w-4 h-4" /> Add new project
-        </DropdownMenuItem>
         <DropdownMenuItem onClick={() => router.push("/settings")} className="gap-2">
-          <Settings2 className="w-4 h-4" /> Manage projects
+          <Settings2 className="w-4 h-4" /> App settings
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

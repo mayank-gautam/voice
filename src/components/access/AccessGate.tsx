@@ -10,9 +10,9 @@ import { getSelectedCredentials } from "@/lib/credentials-store";
 
 /**
  * Routes that remain available when the user is authenticated but has zero
- * projects for the current AWS account/role.
+ * projects for the current AWS account in account-hierarchy.
  */
-const PROJECT_OPTIONAL_PREFIXES = ["/project-setup", "/settings", "/sso", "/login"];
+const PROJECT_OPTIONAL_PREFIXES = ["/settings", "/sso", "/login"];
 
 function isProjectOptionalPath(pathname: string): boolean {
   return PROJECT_OPTIONAL_PREFIXES.some(
@@ -26,12 +26,16 @@ type AccessGateProps = {
 
 /**
  * Client-side authorization gate for dashboard pages.
- * Cookie/SSO auth is enforced by proxy.ts; this gate enforces project access.
+ * Cookie/SSO auth is enforced by proxy.ts; this gate enforces project access
+ * from account-hierarchy (no manual project setup).
+ *
+ * Uses a local spinner only — does not start the global loader (avoids stacking
+ * with RouteLoadingListener / page fetches).
  */
 export function AccessGate({ children }: AccessGateProps) {
   const pathname = usePathname();
   const { projects, activeId, loading, error, refresh } = useProjects();
-  const { startLoading, stopLoading } = useGlobalLoading();
+  const { isLoading: globalLoading } = useGlobalLoading();
   const [sessionMeta, setSessionMeta] = useState<{
     accountId?: string;
     roleName?: string;
@@ -39,12 +43,6 @@ export function AccessGate({ children }: AccessGateProps) {
 
   const optional = useMemo(() => isProjectOptionalPath(pathname), [pathname]);
   const hasProjects = projects.length > 0;
-
-  useEffect(() => {
-    if (!loading) return;
-    startLoading("Loading authorized projects…");
-    return () => stopLoading();
-  }, [loading, startLoading, stopLoading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,6 +71,9 @@ export function AccessGate({ children }: AccessGateProps) {
   }, [loading, hasProjects, activeId, projects, refresh]);
 
   if (loading) {
+    // Prefer the single GlobalLoader when a route transition already owns it.
+    if (globalLoading) return null;
+
     return (
       <div className="flex min-h-[70vh] items-center justify-center">
         <div className="flex flex-col items-center gap-3 text-center">

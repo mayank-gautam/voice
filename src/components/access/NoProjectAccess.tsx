@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { FolderKanban, LogOut, ShieldAlert } from "lucide-react";
+import { LogOut, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { clearAllCredentials } from "@/lib/credentials-store";
 
@@ -33,8 +32,8 @@ export function NoProjectAccess({ accountId, roleName }: NoProjectAccessProps) {
         </h1>
 
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          You are successfully authenticated, but no project has been assigned to
-          your current AWS account/role.
+          You are successfully authenticated, but no project is defined for your
+          current AWS account in account-hierarchy.
         </p>
 
         {(accountId || roleName) && (
@@ -54,17 +53,11 @@ export function NoProjectAccess({ accountId, roleName }: NoProjectAccessProps) {
         )}
 
         <p className="mt-4 text-sm text-muted-foreground">
-          Create a project for this role, or contact your administrator if you
-          expected existing access.
+          Ask an administrator to add your AWS account and project mapping in{" "}
+          <code className="text-[11px]">account-hierarchy.json</code>.
         </p>
 
-        <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
-          <Button asChild className="gap-2">
-            <Link href="/project-setup">
-              <FolderKanban className="h-4 w-4" />
-              Configure project
-            </Link>
-          </Button>
+        <div className="mt-8 flex justify-center">
           <Button variant="outline" className="gap-2" onClick={() => void handleLogout()}>
             <LogOut className="h-4 w-4" />
             Sign out

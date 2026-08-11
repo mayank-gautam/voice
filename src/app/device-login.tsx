@@ -1139,7 +1139,7 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         expiration: awsCredentials.expiration,
       });
 
-      // Twilio credentials remain server-side (env). Do not cache auth tokens in IndexedDB.
+      // Twilio credentials remain server-side in account-hierarchy (never cached in IndexedDB).
 
       const selectedCredentials = await getSelectedCredentials();
 

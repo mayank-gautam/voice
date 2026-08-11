@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiError, requireAuth, resolveProjectId, isAuthOk } from "@/lib/server/api";
-import { getDecryptedActiveProject } from "@/lib/server/projectStore";
+import { apiError, requireAuth, isAuthOk } from "@/lib/server/api";
 import { getTwilioClientFromConfig } from "@/lib/server/twilio";
-import { requireTwilioConfigForAwsAccount } from "@/lib/server/twilioEnv";
 import {
   DEFAULT_CALLS_LIMIT,
   MAX_CALLS_LIMIT,
   fetchCallsForPeriod,
 } from "@/lib/server/twilioCalls";
+import { isProjectTwilioOk, requireProjectTwilio } from "@/lib/server/projectTwilio";
 
 function parseDateParam(value: string | null): Date | undefined {
   if (!value) return undefined;
@@ -19,15 +18,11 @@ export async function GET(request: NextRequest) {
   const auth = await requireAuth();
   if (!isAuthOk(auth)) return auth.response;
 
-  const projectId = await resolveProjectId(request.nextUrl.searchParams);
-  const project = await getDecryptedActiveProject(projectId, { accountId: auth.accountId, roleName: auth.roleName });
-  if (!project) {
-    return apiError("No project configured. Create one in Project Setup.", 400, "NO_PROJECT");
-  }
+  const ctx = await requireProjectTwilio(auth, request.nextUrl.searchParams);
+  if (!isProjectTwilioOk(ctx)) return ctx.response;
 
   try {
-    const twilioConfig = requireTwilioConfigForAwsAccount(auth.accountId);
-    const client = getTwilioClientFromConfig(twilioConfig);
+    const client = getTwilioClientFromConfig(ctx.twilio);
     const limit = Math.min(
       Number(request.nextUrl.searchParams.get("limit") || DEFAULT_CALLS_LIMIT),
       MAX_CALLS_LIMIT,
@@ -58,6 +53,7 @@ export async function GET(request: NextRequest) {
       active: activeMerged,
       truncated,
       source: "twilio",
+      projectId: ctx.project.id,
       filter: {
         startTimeAfter: startTimeAfter?.toISOString() ?? null,
         startTimeBefore: startTimeBefore?.toISOString() ?? null,

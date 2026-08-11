@@ -1,20 +1,33 @@
 import { NextResponse } from "next/server";
-import { loadAccountHierarchy } from "@/lib/server/accountHierarchy";
+import { requireAuth, isAuthOk, apiError } from "@/lib/server/api";
+import { listHierarchyProjectsForAccount } from "@/lib/server/accountHierarchy";
 
 /**
- * Returns Account → Role → Project → Twilio Groups.
- * Dummy JSON today; replace `loadAccountHierarchy` later with live AWS/Twilio.
+ * Public (non-secret) view of account-hierarchy for the authenticated AWS account.
+ * Never returns Twilio auth tokens.
  */
 export async function GET() {
+  const auth = await requireAuth();
+  if (!isAuthOk(auth)) return auth.response;
+
   try {
-    const hierarchy = await loadAccountHierarchy();
-    return NextResponse.json(hierarchy);
+    const projects = await listHierarchyProjectsForAccount(
+      auth.accountId,
+      auth.roleName,
+    );
+
+    return NextResponse.json({
+      accountId: auth.accountId,
+      roleName: auth.roleName,
+      projects: projects.map((project) => ({
+        projectId: project.id,
+        projectName: project.name,
+        hasTwilio: project.hasTwilio,
+      })),
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to load account hierarchy";
-    return NextResponse.json(
-      { error: { code: "HIERARCHY_LOAD_FAILED", message } },
-      { status: 500 },
-    );
+    return apiError(message, 500, "HIERARCHY_LOAD_FAILED");
   }
 }

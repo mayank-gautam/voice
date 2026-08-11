@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiError, requireAuth, isAuthOk } from "@/lib/server/api";
 import { getTwilioClientFromConfig } from "@/lib/server/twilio";
-import { requireTwilioConfigForAwsAccount } from "@/lib/server/twilioEnv";
 import { fetchEnvTagsForCallSids } from "@/lib/server/twilioCallEnv";
+import { isProjectTwilioOk, requireProjectTwilio } from "@/lib/server/projectTwilio";
 
 const MAX_SIDS = 40;
 
@@ -46,8 +46,9 @@ async function handle(request: NextRequest, bodySids?: unknown) {
   }
 
   try {
-    const twilioConfig = requireTwilioConfigForAwsAccount(auth.accountId);
-    const client = getTwilioClientFromConfig(twilioConfig);
+    const ctx = await requireProjectTwilio(auth, request.nextUrl.searchParams);
+    if (!isProjectTwilioOk(ctx)) return ctx.response;
+    const client = getTwilioClientFromConfig(ctx.twilio);
     const tags = await fetchEnvTagsForCallSids(client, sids);
     return NextResponse.json({ tags, source: "twilio" });
   } catch (e) {

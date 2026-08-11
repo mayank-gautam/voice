@@ -13,12 +13,15 @@ export async function POST(_request: NextRequest, ctx: Ctx) {
   if (!isAuthOk(auth)) return auth.response;
 
   const { id } = await ctx.params;
-  const project = await getProjectById(id);
+  const project = await getProjectById(id, {
+    accountId: auth.accountId,
+    roleName: auth.roleName,
+  });
   if (!project) return apiError("Project not found", 404, "NOT_FOUND");
 
   if (!projectMatchesRole(project, auth.accountId, auth.roleName)) {
     return apiError(
-      "This project does not belong to the selected AWS account/role.",
+      "This project does not belong to the selected AWS account.",
       403,
       "PROJECT_SCOPE_MISMATCH",
     );

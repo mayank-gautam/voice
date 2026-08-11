@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiError, requireAuth, resolveProjectId, isAuthOk } from "@/lib/server/api";
+import { apiError, requireAuth, isAuthOk } from "@/lib/server/api";
 import { getTwilioClientFromConfig } from "@/lib/server/twilio";
-import { requireTwilioConfigForAwsAccount } from "@/lib/server/twilioEnv";
+import { isProjectTwilioOk, requireProjectTwilio } from "@/lib/server/projectTwilio";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -9,11 +9,14 @@ export async function GET(request: NextRequest, ctx: Ctx) {
   const auth = await requireAuth();
   if (!isAuthOk(auth)) return auth.response;
 
+  const projectCtx = await requireProjectTwilio(auth, request.nextUrl.searchParams);
+  if (!isProjectTwilioOk(projectCtx)) return projectCtx.response;
+
   const { id } = await ctx.params;
-  const projectId = await resolveProjectId(request.nextUrl.searchParams);
+  const projectId = projectCtx.project.id;
+  const twilioConfig = projectCtx.twilio;
 
   try {
-    const twilioConfig = requireTwilioConfigForAwsAccount(auth.accountId);
     const client = getTwilioClientFromConfig(twilioConfig);
     const recordings = await client.recordings.list({ callSid: id, limit: 5 });
     if (!recordings.length) {

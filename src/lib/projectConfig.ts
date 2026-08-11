@@ -8,6 +8,8 @@ export interface ProjectConfig {
   /** Set by the server from the authenticated AWS account/role. */
   awsAccountId?: string;
   awsRoleName?: string;
+  /** True when Twilio is configured for this project in account-hierarchy. */
+  hasTwilio?: boolean;
   aws: {
     region: string;
     cloudWatchLogGroup?: string;

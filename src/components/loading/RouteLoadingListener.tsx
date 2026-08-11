@@ -5,8 +5,9 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useGlobalLoading } from "@/lib/loading";
 
 /**
- * Shows the global loader while App Router navigations settle.
- * Individual pages should also call start/stop for their own data fetches.
+ * Shows the global loader briefly while App Router navigations settle.
+ * Page-level data fetches should use local skeletons/spinners only — do not
+ * also call startLoading for the same work (avoids stacked full-screen loaders).
  */
 function RouteLoadingListenerInner() {
   const pathname = usePathname();

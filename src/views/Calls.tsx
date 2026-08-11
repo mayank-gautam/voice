@@ -11,7 +11,6 @@ import { Phone, PhoneIncoming, PhoneOutgoing, AlertTriangle, RefreshCw, Loader2,
 import { useProjects } from "@/lib/projectConfig";
 import { useTimeRange } from "@/lib/timeRange";
 import type { CallEnvTag } from "@/lib/callEnvTag";
-import { useGlobalLoading } from "@/lib/loading";
 import { toast } from "sonner";
 
 type CallRow = {
@@ -34,7 +33,6 @@ const ENV_TAG_BATCH = 30;
 const CallsContent = () => {
   const { activeId, active, loading: projectsLoading } = useProjects();
   const { timeRange, dateRange, getBounds, refreshToken, triggerRefresh } = useTimeRange();
-  const { startLoading, stopLoading } = useGlobalLoading();
   const [calls, setCalls] = useState<CallRow[]>([]);
   const [source, setSource] = useState<"twilio" | "empty">("empty");
   const [loading, setLoading] = useState(true);
@@ -106,15 +104,10 @@ const CallsContent = () => {
       setLoading(true);
       setError(null);
       setCalls([]);
-      startLoading(
-        active?.name
-          ? `Fetching Twilio calls for ${active.name}…`
-          : "Fetching Twilio calls…",
-      );
       try {
         if (!projectId) {
           setSource("empty");
-          setError("No project selected for this AWS account/role.");
+          setError("No project selected for this AWS account.");
           return;
         }
 
@@ -158,10 +151,9 @@ const CallsContent = () => {
         if (requestGen === requestGenRef.current) {
           setLoading(false);
         }
-        stopLoading();
       }
     },
-    [active?.name, enrichEnvTags, getBounds, startLoading, stopLoading],
+    [enrichEnvTags, getBounds],
   );
 
   useEffect(() => {

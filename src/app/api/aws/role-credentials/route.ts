@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GetRoleCredentialsCommand, SSOClient } from "@aws-sdk/client-sso";
 
-import { getTwilioConfigForAwsAccount } from "@/lib/server/twilioEnv";
+import {
+  accountHasHierarchyProjects,
+  listHierarchyProjectsForAccount,
+} from "@/lib/server/accountHierarchy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -107,8 +110,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Twilio stays server-side (env TWILIO_*_<accountId>). Never return auth tokens to the browser.
-    const twilioConfig = getTwilioConfigForAwsAccount(accountId);
+    // Twilio stays server-side in account-hierarchy. Never return auth tokens.
+    const projects = await listHierarchyProjectsForAccount(accountId, roleName);
+    const twilioConfigured = projects.some((project) => project.hasTwilio);
 
     return NextResponse.json(
       {
@@ -121,10 +125,9 @@ export async function POST(request: NextRequest) {
           sessionToken,
           expiration: expirationDate.toISOString(),
         },
-        twilioConfigured: Boolean(twilioConfig),
-        twilioAccountSidHint: twilioConfig
-          ? `${twilioConfig.accountSid.slice(0, 4)}…${twilioConfig.accountSid.slice(-4)}`
-          : null,
+        hierarchyConfigured: await accountHasHierarchyProjects(accountId),
+        projectCount: projects.length,
+        twilioConfigured,
       },
       {
         status: 200,

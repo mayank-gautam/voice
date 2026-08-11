@@ -1,166 +1,151 @@
 /**
- * Account → Role → Project → Twilio Groups hierarchy.
+ * account-hierarchy.json shape (source of truth):
  *
- * Today this is loaded from the dummy JSON config (dev/testing).
- * Later the same shapes can be filled from real AWS / Twilio APIs
- * without changing cascading UI components.
+ * {
+ *   "<awsAccountId>": {
+ *     "<projectId>": {
+ *       "twilio": { "accountSid": "...", "authToken": "..." }
+ *     }
+ *   }
+ * }
+ *
+ * There is no role level in this file. AWS roles still come from SSO;
+ * projects/Twilio are resolved by matching the authenticated AWS account ID.
  */
 
-export type HierarchyProject = {
-  projectId: string;
-  projectName: string;
-  /** Dummy Twilio group IDs for this project (no credentials). */
-  groups: string[];
+export type HierarchyTwilioConfig = {
+  accountSid?: string;
+  authToken?: string;
+  region?: string;
+  edge?: string;
+  phoneNumber?: string;
 };
 
-export type HierarchyRole = {
-  roleId: string;
-  roleName: string;
-  projects: HierarchyProject[];
+export type HierarchyProjectEntry = {
+  twilio?: HierarchyTwilioConfig;
+  [key: string]: unknown;
 };
 
-export type HierarchyAccount = {
-  accountId: string;
-  accountName: string;
-  roles: HierarchyRole[];
+/** Raw file: accountId → projectId → config */
+export type AccountHierarchyFile = Record<
+  string,
+  Record<string, HierarchyProjectEntry>
+>;
+
+/** Public project (safe for the browser — never includes Twilio secrets). */
+export type HierarchyProjectPublic = {
+  id: string;
+  name: string;
+  environment: "development" | "staging" | "production";
+  awsAccountId: string;
+  /** Session role that unlocked this account (not stored in hierarchy). */
+  awsRoleName: string;
+  hasTwilio: boolean;
+  aws: {
+    region: string;
+    cloudWatchLogGroup?: string;
+    cloudWatchFilterPattern?: string;
+  };
+  createdAt: string;
+  updatedAt: string;
 };
-
-export type AccountHierarchy = {
-  accounts: HierarchyAccount[];
-};
-
-export type HierarchySelection = {
-  accountId: string | null;
-  roleId: string | null;
-  projectId: string | null;
-  groupId: string | null;
-};
-
-export const emptyHierarchySelection = (): HierarchySelection => ({
-  accountId: null,
-  roleId: null,
-  projectId: null,
-  groupId: null,
-});
-
-export function listAccounts(hierarchy: AccountHierarchy): HierarchyAccount[] {
-  return hierarchy.accounts ?? [];
-}
-
-export function findAccount(
-  hierarchy: AccountHierarchy,
-  accountId: string | null | undefined,
-): HierarchyAccount | null {
-  if (!accountId) return null;
-  return hierarchy.accounts.find((a) => a.accountId === accountId) ?? null;
-}
-
-export function listRolesForAccount(
-  hierarchy: AccountHierarchy,
-  accountId: string | null | undefined,
-): HierarchyRole[] {
-  return findAccount(hierarchy, accountId)?.roles ?? [];
-}
-
-export function findRole(
-  hierarchy: AccountHierarchy,
-  accountId: string | null | undefined,
-  roleId: string | null | undefined,
-): HierarchyRole | null {
-  if (!roleId) return null;
-  return listRolesForAccount(hierarchy, accountId).find((r) => r.roleId === roleId) ?? null;
-}
-
-export function listProjectsForRole(
-  hierarchy: AccountHierarchy,
-  accountId: string | null | undefined,
-  roleId: string | null | undefined,
-): HierarchyProject[] {
-  return findRole(hierarchy, accountId, roleId)?.projects ?? [];
-}
-
-export function findProject(
-  hierarchy: AccountHierarchy,
-  accountId: string | null | undefined,
-  roleId: string | null | undefined,
-  projectId: string | null | undefined,
-): HierarchyProject | null {
-  if (!projectId) return null;
-  return (
-    listProjectsForRole(hierarchy, accountId, roleId).find((p) => p.projectId === projectId) ??
-    null
-  );
-}
-
-export function listGroupsForProject(
-  hierarchy: AccountHierarchy,
-  accountId: string | null | undefined,
-  roleId: string | null | undefined,
-  projectId: string | null | undefined,
-): string[] {
-  return findProject(hierarchy, accountId, roleId, projectId)?.groups ?? [];
-}
 
 /**
- * When account changes, clear role/project/group.
- * When role changes, clear project/group.
- * When project changes, clear group (and keep only valid group if still present).
+ * Match a full 12-digit SSO account ID to a hierarchy key.
+ * Supports exact keys and abbreviated keys (e.g. "11111" ↔ "…11111").
  */
-export function cascadeSelection(
-  previous: HierarchySelection,
-  patch: Partial<HierarchySelection>,
-  hierarchy: AccountHierarchy,
-): HierarchySelection {
-  let next: HierarchySelection = { ...previous, ...patch };
+export function resolveHierarchyAccountKey(
+  hierarchy: AccountHierarchyFile,
+  accountId: string | null | undefined,
+): string | null {
+  const id = accountId?.trim();
+  if (!id || !hierarchy || typeof hierarchy !== "object") return null;
 
-  if (patch.accountId !== undefined && patch.accountId !== previous.accountId) {
-    next = { accountId: patch.accountId, roleId: null, projectId: null, groupId: null };
-  } else if (patch.roleId !== undefined && patch.roleId !== previous.roleId) {
-    next = {
-      accountId: next.accountId,
-      roleId: patch.roleId,
-      projectId: null,
-      groupId: null,
-    };
-  } else if (patch.projectId !== undefined && patch.projectId !== previous.projectId) {
-    next = {
-      accountId: next.accountId,
-      roleId: next.roleId,
-      projectId: patch.projectId,
-      groupId: null,
-    };
+  if (Object.prototype.hasOwnProperty.call(hierarchy, id)) {
+    return id;
   }
 
-  // Drop invalid selections if hierarchy changed under us.
-  const roles = listRolesForAccount(hierarchy, next.accountId);
-  if (next.roleId && !roles.some((r) => r.roleId === next.roleId)) {
-    next = { ...next, roleId: null, projectId: null, groupId: null };
-  }
-  const projects = listProjectsForRole(hierarchy, next.accountId, next.roleId);
-  if (next.projectId && !projects.some((p) => p.projectId === next.projectId)) {
-    next = { ...next, projectId: null, groupId: null };
-  }
-  const groups = listGroupsForProject(
-    hierarchy,
-    next.accountId,
-    next.roleId,
-    next.projectId,
+  const keys = Object.keys(hierarchy).filter((key) => {
+    const entry = hierarchy[key];
+    return entry && typeof entry === "object" && !Array.isArray(entry);
+  });
+
+  const suffix = keys.find(
+    (key) => id === key || id.endsWith(key) || key.endsWith(id),
   );
-  if (next.groupId && !groups.includes(next.groupId)) {
-    next = { ...next, groupId: null };
-  }
-
-  return next;
+  return suffix ?? null;
 }
 
-export async function fetchAccountHierarchy(): Promise<AccountHierarchy> {
-  const res = await fetch("/api/account-hierarchy", { credentials: "include" });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(
-      (data as { error?: { message?: string } })?.error?.message ||
-        `Failed to load account hierarchy (${res.status})`,
-    );
+export function isAccountHierarchyFile(value: unknown): value is AccountHierarchyFile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  // Reject the legacy { accounts: [...] } shape.
+  if (Object.prototype.hasOwnProperty.call(value, "accounts")) return false;
+
+  for (const [accountKey, projects] of Object.entries(value as Record<string, unknown>)) {
+    if (!accountKey.trim()) return false;
+    if (!projects || typeof projects !== "object" || Array.isArray(projects)) {
+      return false;
+    }
   }
-  return data as AccountHierarchy;
+  return true;
+}
+
+export function listProjectIdsForAccount(
+  hierarchy: AccountHierarchyFile,
+  accountId: string | null | undefined,
+): string[] {
+  const key = resolveHierarchyAccountKey(hierarchy, accountId);
+  if (!key) return [];
+  return Object.keys(hierarchy[key] ?? {}).filter((projectId) => {
+    const entry = hierarchy[key][projectId];
+    return entry && typeof entry === "object" && !Array.isArray(entry);
+  });
+}
+
+export function getProjectEntry(
+  hierarchy: AccountHierarchyFile,
+  accountId: string | null | undefined,
+  projectId: string | null | undefined,
+): HierarchyProjectEntry | null {
+  const key = resolveHierarchyAccountKey(hierarchy, accountId);
+  const pid = projectId?.trim();
+  if (!key || !pid) return null;
+  const entry = hierarchy[key]?.[pid];
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  return entry;
+}
+
+function titleCaseProjectId(projectId: string): string {
+  return projectId
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+export function toPublicHierarchyProject(
+  accountId: string,
+  roleName: string,
+  projectId: string,
+  entry: HierarchyProjectEntry,
+): HierarchyProjectPublic {
+  const twilio = entry.twilio;
+  const hasTwilio = Boolean(twilio?.accountSid?.trim() && twilio?.authToken?.trim());
+  const now = new Date(0).toISOString();
+
+  return {
+    id: projectId,
+    name: titleCaseProjectId(projectId),
+    environment: "development",
+    awsAccountId: accountId.trim(),
+    awsRoleName: roleName.trim(),
+    hasTwilio,
+    aws: {
+      region: "us-east-1",
+      cloudWatchLogGroup: "",
+      cloudWatchFilterPattern: "",
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
 }

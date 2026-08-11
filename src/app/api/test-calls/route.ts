@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiError, requireAuth, resolveProjectId, isAuthOk } from "@/lib/server/api";
-import { getDecryptedActiveProject } from "@/lib/server/projectStore";
+import { apiError, requireAuth, isAuthOk } from "@/lib/server/api";
 import { getTwilioClientFromConfig } from "@/lib/server/twilio";
-import { requireTwilioConfigForAwsAccount } from "@/lib/server/twilioEnv";
+import { isProjectTwilioOk, requireProjectTwilio } from "@/lib/server/projectTwilio";
 
 const E164 = /^\+[1-9]\d{7,14}$/;
 const MAX_TWIML_CHARS = 64_000;
@@ -27,8 +26,9 @@ export async function POST(request: NextRequest) {
   const auth = await requireAuth();
   if (!isAuthOk(auth)) return auth.response;
 
-  const projectId = await resolveProjectId(request.nextUrl.searchParams);
-  const project = await getDecryptedActiveProject(projectId, { accountId: auth.accountId, roleName: auth.roleName });
+  const projectCtx = await requireProjectTwilio(auth, request.nextUrl.searchParams);
+  if (!isProjectTwilioOk(projectCtx)) return projectCtx.response;
+  const project = projectCtx.project;
 
   let body: {
     to?: string;
@@ -100,8 +100,7 @@ export async function POST(request: NextRequest) {
       : undefined;
 
   try {
-    const twilioConfig = requireTwilioConfigForAwsAccount(auth.accountId);
-    const client = getTwilioClientFromConfig(twilioConfig);
+    const client = getTwilioClientFromConfig(projectCtx.twilio);
     const call = await client.calls.create({
       to,
       from,
@@ -131,7 +130,7 @@ export async function POST(request: NextRequest) {
       },
       mode,
       source: "twilio",
-      projectId: project?.id ?? null,
+      projectId: project.id,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to create Twilio call";

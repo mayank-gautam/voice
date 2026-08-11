@@ -1,141 +1,95 @@
 "use client";
 
-import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { FolderKanban, Plus, Pencil, Trash2, Check } from "lucide-react";
+import { FolderKanban, Check } from "lucide-react";
 import { toast } from "sonner";
-import { ProjectConfigForm } from "@/components/project/ProjectConfigForm";
-import { useProjects, type ProjectConfig } from "@/lib/projectConfig";
-import { parseLogGroupPatterns } from "@/lib/cloudWatchLogGroups";
+import { useProjects } from "@/lib/projectConfig";
+import { useGlobalLoading } from "@/lib/loading";
 
+/**
+ * App Settings: shows projects from account-hierarchy for the current AWS account.
+ * Active project is the single source of truth (cookie + localStorage + server meta).
+ */
 export const ProjectSettingsCard = () => {
-  const { projects, activeId, setActiveProject, upsertProject, deleteProject, loading } =
-    useProjects();
-  const [editing, setEditing] = useState<{ project?: ProjectConfig } | null>(null);
+  const { projects, activeId, setActiveProject, loading } = useProjects();
+  const { withLoading } = useGlobalLoading();
 
   return (
     <Card className="bg-card/50 border-border/50">
-      <CardHeader className="flex flex-row items-start justify-between gap-3">
+      <CardHeader>
         <div>
           <CardTitle className="text-base font-medium flex items-center gap-2">
             <FolderKanban className="w-4 h-4 text-primary" />
-            CloudWatch projects
+            Active project
           </CardTitle>
           <CardDescription>
-            Log group and Insights settings per project. AWS SSO and Twilio (env per account) are
-            configured separately.
+            Projects and Twilio credentials come from{" "}
+            <code className="text-[11px]">account-hierarchy.json</code> for your signed-in AWS
+            account. Switching here updates App Settings for the whole app.
           </CardDescription>
         </div>
-        <Button size="sm" className="gap-2 shrink-0" onClick={() => setEditing({})}>
-          <Plus className="w-4 h-4" /> New project
-        </Button>
       </CardHeader>
       <CardContent className="space-y-3">
         {loading && <p className="text-sm text-muted-foreground">Loading projects…</p>}
         {!loading && projects.length === 0 && (
-          <p className="text-sm text-muted-foreground">No projects configured yet.</p>
+          <p className="text-sm text-muted-foreground">
+            No projects for this AWS account in account-hierarchy.
+          </p>
         )}
         {projects.map((p) => (
           <div key={p.id} className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-2">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">{p.name}</span>
-                <Badge variant="outline" className="text-[10px] capitalize">
-                  {p.environment}
+                <Badge variant="outline" className="text-[10px] font-mono">
+                  {p.id}
                 </Badge>
+                {p.hasTwilio ? (
+                  <Badge variant="outline" className="text-[10px] text-chart-success">
+                    Twilio configured
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px]">
+                    No Twilio
+                  </Badge>
+                )}
                 {p.id === activeId && (
                   <Badge className="text-[10px] gap-1">
                     <Check className="w-3 h-3" /> Active
                   </Badge>
                 )}
               </div>
-              <div className="flex gap-1.5">
-                {p.id !== activeId && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={async () => {
-                      await setActiveProject(p.id);
-                      toast.success(`Switched to ${p.name}`);
-                    }}
-                  >
-                    Switch
-                  </Button>
-                )}
+              {p.id !== activeId && (
                 <Button
                   variant="outline"
                   size="sm"
-                  className="gap-1.5"
-                  onClick={() => setEditing({ project: p })}
-                >
-                  <Pencil className="w-3.5 h-3.5" /> Edit
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive"
                   onClick={async () => {
-                    await deleteProject(p.id);
-                    toast.success("Project removed");
+                    try {
+                      await withLoading(
+                        async () => {
+                          await setActiveProject(p.id);
+                        },
+                        `Switching to ${p.name}…`,
+                      );
+                      toast.success(`Switched to ${p.name}`);
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Unable to switch project");
+                    }
                   }}
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  Switch
                 </Button>
-              </div>
+              )}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-muted-foreground font-mono">
-              <span>AWS region: {p.aws.region}</span>
-              <span className="sm:col-span-2 whitespace-pre-wrap break-all">
-                CW log groups:{" "}
-                {p.aws.cloudWatchLogGroup
-                  ? parseLogGroupPatterns(p.aws.cloudWatchLogGroup).join(" · ") || "—"
-                  : "—"}
-              </span>
-              <span className="sm:col-span-2 whitespace-pre-wrap break-all">
-                CW Insights filter:{" "}
-                {p.aws.cloudWatchFilterPattern?.trim()
-                  ? p.aws.cloudWatchFilterPattern.trim().slice(0, 120) +
-                    (p.aws.cloudWatchFilterPattern.trim().length > 120 ? "…" : "")
-                  : 'SOURCE… | filter @message like /{callId}/ (default)'}
-              </span>
+            <div className="text-[11px] text-muted-foreground font-mono">
+              AWS account: {p.awsAccountId || "—"}
+              {p.awsRoleName ? ` · role: ${p.awsRoleName}` : ""}
             </div>
           </div>
         ))}
       </CardContent>
-
-      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editing?.project ? "Edit project" : "New project"}</DialogTitle>
-          </DialogHeader>
-          {editing && (
-            <ProjectConfigForm
-              initial={editing.project}
-              submitLabel={editing.project ? "Save changes" : "Create project"}
-              onCancel={() => setEditing(null)}
-              onSubmit={async (p) => {
-                try {
-                  await upsertProject(p);
-                  setEditing(null);
-                  toast.success(editing.project ? "Project updated" : "Project created", {
-                    description: p.name,
-                  });
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : "Failed to save project");
-                }
-              }}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
     </Card>
   );
 };

@@ -1,7 +1,10 @@
-import { promises as fs } from "fs";
-import path from "path";
-import { normalizeLogGroupPatterns } from "@/lib/cloudWatchLogGroups";
-import { resolveCloudWatchInsightsFilter } from "@/lib/cloudWatchInsightsQuery";
+import {
+  getHierarchyProject,
+  listHierarchyProjectsForAccount,
+  resolveActiveHierarchyProjectId,
+  setActiveHierarchyProjectId,
+} from "@/lib/server/accountHierarchy";
+import type { HierarchyProjectPublic } from "@/lib/accountHierarchy";
 
 export interface ProjectConfig {
   id: string;
@@ -9,8 +12,10 @@ export interface ProjectConfig {
   environment: "development" | "staging" | "production";
   /** AWS account that owns this project (12-digit). */
   awsAccountId: string;
-  /** IAM Identity Center role that owns this project. */
+  /** IAM Identity Center role from the current SSO session. */
   awsRoleName: string;
+  /** True when Twilio SID+token exist in account-hierarchy for this project. */
+  hasTwilio?: boolean;
   aws: {
     region: string;
     cloudWatchLogGroup?: string;
@@ -22,266 +27,111 @@ export interface ProjectConfig {
 
 export type ProjectPublic = ProjectConfig;
 
-interface StoreFile {
-  projects: ProjectConfig[];
-  activeProjectId: string | null;
-}
-
-const DATA_DIR = path.join(process.cwd(), ".data");
-const STORE_PATH = path.join(DATA_DIR, "projects.json");
-
-function normalizeOwnerId(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function normalizeProject(project: ProjectConfig): ProjectConfig {
+function fromHierarchy(project: HierarchyProjectPublic): ProjectConfig {
   return {
-    ...project,
-    awsAccountId: normalizeOwnerId(project.awsAccountId),
-    awsRoleName: normalizeOwnerId(project.awsRoleName),
-    aws: {
-      region: project.aws?.region || "us-east-1",
-      cloudWatchLogGroup: normalizeLogGroupPatterns(project.aws?.cloudWatchLogGroup),
-      cloudWatchFilterPattern: resolveCloudWatchInsightsFilter(
-        project.aws?.cloudWatchFilterPattern,
-      ),
-    },
+    id: project.id,
+    name: project.name,
+    environment: project.environment,
+    awsAccountId: project.awsAccountId,
+    awsRoleName: project.awsRoleName,
+    hasTwilio: project.hasTwilio,
+    aws: { ...project.aws },
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
   };
 }
 
 export function projectMatchesRole(
   project: ProjectConfig,
   accountId: string,
-  roleName: string,
+  _roleName: string,
 ): boolean {
+  // Hierarchy is account-scoped (no role level in the file). Role is session context only.
   const normalizedAccountId = accountId.trim();
-  const normalizedRoleName = roleName.trim();
-  return (
-    Boolean(project.awsAccountId) &&
-    Boolean(project.awsRoleName) &&
-    project.awsAccountId === normalizedAccountId &&
-    project.awsRoleName === normalizedRoleName
-  );
-}
-
-/** Migrate legacy projects that stored Twilio/AWS secrets in the file. */
-function migrateLegacyProject(raw: Record<string, unknown>): ProjectConfig {
-  const aws = (raw.aws as Record<string, unknown> | undefined) ?? {};
-
-  return normalizeProject({
-    id: String(raw.id ?? `prj_${Math.random().toString(36).slice(2, 10)}`),
-    name: String(raw.name ?? "Untitled project"),
-    environment:
-      raw.environment === "staging" || raw.environment === "production"
-        ? raw.environment
-        : "development",
-    awsAccountId: normalizeOwnerId(raw.awsAccountId),
-    awsRoleName: normalizeOwnerId(raw.awsRoleName),
-    aws: {
-      region: typeof aws.region === "string" ? aws.region : "us-east-1",
-      cloudWatchLogGroup:
-        typeof aws.cloudWatchLogGroup === "string" ? aws.cloudWatchLogGroup : "",
-      cloudWatchFilterPattern:
-        typeof aws.cloudWatchFilterPattern === "string"
-          ? aws.cloudWatchFilterPattern
-          : undefined,
-    },
-    createdAt: String(raw.createdAt ?? new Date().toISOString()),
-    updatedAt: String(raw.updatedAt ?? new Date().toISOString()),
-  });
-}
-
-async function ensureStore(): Promise<StoreFile> {
-  try {
-    const raw = await fs.readFile(STORE_PATH, "utf8");
-    const parsed = JSON.parse(raw) as StoreFile;
-    return {
-      projects: (parsed.projects ?? []).map((p) =>
-        migrateLegacyProject(p as unknown as Record<string, unknown>),
-      ),
-      activeProjectId: parsed.activeProjectId ?? null,
-    };
-  } catch {
-    return { projects: [], activeProjectId: null };
-  }
-}
-
-async function writeStore(store: StoreFile): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf8");
+  return Boolean(project.awsAccountId) && project.awsAccountId === normalizedAccountId;
 }
 
 export function toPublicProject(project: ProjectConfig): ProjectPublic {
-  return normalizeProject(project);
-}
-
-export async function listProjects(): Promise<ProjectPublic[]> {
-  const store = await ensureStore();
-  return store.projects.map(toPublicProject);
+  return { ...project };
 }
 
 export async function listProjectsForRole(
   accountId: string,
   roleName: string,
 ): Promise<ProjectPublic[]> {
-  const projects = await listProjects();
-  return projects.filter((project) =>
-    projectMatchesRole(project, accountId, roleName),
-  );
-}
-
-export async function getStoreMeta(): Promise<{ activeProjectId: string | null }> {
-  const store = await ensureStore();
-  return { activeProjectId: store.activeProjectId ?? store.projects[0]?.id ?? null };
+  const projects = await listHierarchyProjectsForAccount(accountId, roleName);
+  return projects.map(fromHierarchy);
 }
 
 export async function getStoreMetaForRole(
   accountId: string,
   roleName: string,
+  preferredId?: string | null,
 ): Promise<{ activeProjectId: string | null }> {
-  const store = await ensureStore();
-  const scoped = store.projects.filter((project) =>
-    projectMatchesRole(project, accountId, roleName),
+  const activeProjectId = await resolveActiveHierarchyProjectId(
+    accountId,
+    roleName,
+    preferredId,
   );
-
-  if (scoped.length === 0) {
-    return { activeProjectId: null };
-  }
-
-  const activeStillValid =
-    store.activeProjectId &&
-    scoped.some((project) => project.id === store.activeProjectId);
-
-  const activeProjectId = activeStillValid
-    ? store.activeProjectId
-    : scoped[0]?.id ?? null;
-
-  if (activeProjectId && store.activeProjectId !== activeProjectId) {
-    store.activeProjectId = activeProjectId;
-    await writeStore(store);
-  }
-
   return { activeProjectId };
 }
 
-export async function getProjectById(id: string): Promise<ProjectConfig | null> {
-  const store = await ensureStore();
-  const project = store.projects.find((p) => p.id === id);
-  return project ? normalizeProject(project) : null;
-}
-
-export async function getActiveProject(): Promise<ProjectConfig | null> {
-  const store = await ensureStore();
-  const id = store.activeProjectId ?? store.projects[0]?.id;
-  if (!id) return null;
-  const project = store.projects.find((p) => p.id === id);
-  return project ? normalizeProject(project) : null;
+export async function getProjectById(
+  id: string,
+  scope?: { accountId: string; roleName: string },
+): Promise<ProjectConfig | null> {
+  if (!scope) return null;
+  const project = await getHierarchyProject(scope.accountId, scope.roleName, id);
+  return project ? fromHierarchy(project) : null;
 }
 
 export async function getDecryptedActiveProject(
   projectId?: string | null,
   scope?: { accountId: string; roleName: string },
 ): Promise<ProjectConfig | null> {
-  const candidate = projectId
-    ? await getProjectById(projectId)
-    : await getActiveProject();
+  if (!scope) return null;
 
-  if (!scope) {
-    return candidate;
-  }
+  const activeId = await resolveActiveHierarchyProjectId(
+    scope.accountId,
+    scope.roleName,
+    projectId,
+  );
+  if (!activeId) return null;
 
-  if (candidate && projectMatchesRole(candidate, scope.accountId, scope.roleName)) {
-    return candidate;
-  }
-
-  const scoped = await listProjectsForRole(scope.accountId, scope.roleName);
-  return scoped[0] ?? null;
+  const project = await getHierarchyProject(scope.accountId, scope.roleName, activeId);
+  return project ? fromHierarchy(project) : null;
 }
 
+export async function setActiveProjectId(id: string): Promise<boolean> {
+  const trimmed = id?.trim();
+  if (!trimmed) return false;
+  await setActiveHierarchyProjectId(trimmed);
+  return true;
+}
+
+/** Manual create/update/delete disabled — account-hierarchy.json is the source of truth. */
 export async function createProject(
-  input: Omit<ProjectConfig, "createdAt" | "updatedAt"> & {
+  _input: Omit<ProjectConfig, "createdAt" | "updatedAt"> & {
     createdAt?: string;
     updatedAt?: string;
   },
 ): Promise<ProjectPublic> {
-  const awsAccountId = normalizeOwnerId(input.awsAccountId);
-  const awsRoleName = normalizeOwnerId(input.awsRoleName);
-
-  if (!awsAccountId || !/^\d{12}$/.test(awsAccountId)) {
-    throw new Error("Project awsAccountId must be a 12-digit AWS account ID.");
-  }
-
-  if (!awsRoleName) {
-    throw new Error("Project awsRoleName is required.");
-  }
-
-  const store = await ensureStore();
-  const now = new Date().toISOString();
-  const project = normalizeProject({
-    ...input,
-    awsAccountId,
-    awsRoleName,
-    createdAt: input.createdAt ?? now,
-    updatedAt: now,
-  });
-  store.projects.push(project);
-  if (!store.activeProjectId) store.activeProjectId = project.id;
-  await writeStore(store);
-  return toPublicProject(project);
+  throw new Error(
+    "Projects are defined in account-hierarchy.json and cannot be created from the UI.",
+  );
 }
 
 export async function updateProject(
-  id: string,
-  patch: Partial<ProjectConfig>,
+  _id: string,
+  _patch: Partial<ProjectConfig>,
 ): Promise<ProjectPublic | null> {
-  const store = await ensureStore();
-  const idx = store.projects.findIndex((p) => p.id === id);
-  if (idx < 0) return null;
-
-  const existing = normalizeProject(store.projects[idx]);
-  const updated = normalizeProject({
-    ...existing,
-    ...patch,
-    id,
-    awsAccountId:
-      patch.awsAccountId !== undefined
-        ? normalizeOwnerId(patch.awsAccountId)
-        : existing.awsAccountId,
-    awsRoleName:
-      patch.awsRoleName !== undefined
-        ? normalizeOwnerId(patch.awsRoleName)
-        : existing.awsRoleName,
-    aws: {
-      region: patch.aws?.region ?? existing.aws.region,
-      cloudWatchLogGroup:
-        patch.aws?.cloudWatchLogGroup ?? existing.aws.cloudWatchLogGroup ?? "",
-      cloudWatchFilterPattern:
-        patch.aws?.cloudWatchFilterPattern ?? existing.aws.cloudWatchFilterPattern,
-    },
-    updatedAt: new Date().toISOString(),
-  });
-
-  store.projects[idx] = updated;
-  await writeStore(store);
-  return toPublicProject(updated);
+  throw new Error(
+    "Projects are defined in account-hierarchy.json and cannot be edited from the UI.",
+  );
 }
 
-export async function deleteProject(id: string): Promise<boolean> {
-  const store = await ensureStore();
-  const before = store.projects.length;
-  store.projects = store.projects.filter((p) => p.id !== id);
-  if (store.projects.length === before) return false;
-  if (store.activeProjectId === id) {
-    store.activeProjectId = store.projects[0]?.id ?? null;
-  }
-  await writeStore(store);
-  return true;
-}
-
-export async function setActiveProjectId(id: string): Promise<boolean> {
-  const store = await ensureStore();
-  if (!store.projects.some((p) => p.id === id)) return false;
-  store.activeProjectId = id;
-  await writeStore(store);
-  return true;
+export async function deleteProject(_id: string): Promise<boolean> {
+  throw new Error(
+    "Projects are defined in account-hierarchy.json and cannot be deleted from the UI.",
+  );
 }

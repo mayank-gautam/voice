@@ -28,7 +28,6 @@ import {
 } from "@/lib/mockData";
 import { useProjects } from "@/lib/projectConfig";
 import { useTimeRange } from "@/lib/timeRange";
-import { useGlobalLoading } from "@/lib/loading";
 import { toast } from "sonner";
 
 type VolumePoint = { time: string; inbound: number; outbound: number };
@@ -84,7 +83,6 @@ function formatDuration(seconds: number) {
 const OverviewContent = () => {
   const { activeId, active, loading: projectsLoading } = useProjects();
   const { timeRange, dateRange, getBounds, refreshToken } = useTimeRange();
-  const { startLoading, stopLoading } = useGlobalLoading();
   const [data, setData] = useState<OverviewPayload | null>(null);
   const [source, setSource] = useState<"twilio" | "empty">("empty");
   const [loading, setLoading] = useState(true);
@@ -110,15 +108,10 @@ const OverviewContent = () => {
     setLoading(true);
     setError(null);
     setData(null);
-    startLoading(
-      active?.name
-        ? `Loading overview for ${active.name}…`
-        : "Loading dashboard overview…",
-    );
     try {
       if (!activeId) {
         setSource("empty");
-        setError("No project selected for this AWS account/role.");
+        setError("No project selected for this AWS account.");
         return;
       }
 
@@ -156,9 +149,8 @@ const OverviewContent = () => {
       if (requestGen === requestGenRef.current) {
         setLoading(false);
       }
-      stopLoading();
     }
-  }, [active?.name, activeId, getBounds, startLoading, stopLoading]);
+  }, [activeId, getBounds]);
 
   useEffect(() => {
     if (projectsLoading) return;
