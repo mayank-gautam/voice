@@ -1,0 +1,283 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 187 85% 34%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 40% 94%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 40% 94%;
+    --muted-foreground: 215 16% 42%;
+
+    --accent: 187 72% 40%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 46%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 66% 34%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 32 90% 42%;
+    --warning-foreground: 0 0% 100%;
+
+    --info: 217 85% 50%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 214 25% 87%;
+    --input: 214 25% 87%;
+    --ring: 187 85% 34%;
+
+    --radius: 0.75rem;
+
+    /* Chart colors */
+    --chart-1: 187 85% 34%;
+    --chart-2: 142 66% 34%;
+    --chart-3: 32 90% 42%;
+    --chart-4: 280 62% 50%;
+    --chart-5: 0 72% 46%;
+    --chart-6: 217 85% 50%;
+
+    /* Glow effects */
+    --glow-primary: 0 4px 16px hsl(187 85% 34% / 0.18);
+    --glow-success: 0 4px 16px hsl(142 66% 34% / 0.18);
+    --glow-warning: 0 4px 16px hsl(32 90% 42% / 0.18);
+    --glow-destructive: 0 4px 16px hsl(0 72% 46% / 0.18);
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 187 85% 34%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 40% 94%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 214 25% 87%;
+    --sidebar-ring: 187 85% 34%;
+  }
+
+  .dark {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 8%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 10%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 187 92% 50%;
+    --primary-foreground: 222 47% 6%;
+
+    --secondary: 222 47% 14%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 222 47% 12%;
+    --muted-foreground: 215 20% 55%;
+
+    --accent: 187 72% 40%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+
+    --success: 142 72% 45%;
+    --success-foreground: 210 40% 98%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 222 47% 6%;
+
+    --info: 217 91% 60%;
+    --info-foreground: 210 40% 98%;
+
+    --border: 222 47% 16%;
+    --input: 222 47% 14%;
+    --ring: 187 92% 50%;
+
+    /* Chart colors */
+    --chart-1: 187 92% 50%;
+    --chart-2: 142 72% 45%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 280 72% 60%;
+    --chart-5: 0 72% 51%;
+    --chart-6: 217 91% 60%;
+
+    /* Glow effects */
+    --glow-primary: 0 0 20px hsl(187 92% 50% / 0.3);
+    --glow-success: 0 0 20px hsl(142 72% 45% / 0.3);
+    --glow-warning: 0 0 20px hsl(38 92% 50% / 0.3);
+    --glow-destructive: 0 0 20px hsl(0 72% 51% / 0.3);
+
+    --sidebar-background: 222 47% 6%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 187 92% 50%;
+    --sidebar-primary-foreground: 222 47% 6%;
+    --sidebar-accent: 222 47% 12%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 222 47% 16%;
+    --sidebar-ring: 187 92% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  code, .mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-card/50 backdrop-blur-xl border border-border/50 rounded-xl;
+  }
+
+  .metric-glow {
+    box-shadow: var(--glow-primary);
+  }
+
+  .metric-glow-success {
+    box-shadow: var(--glow-success);
+  }
+
+  .metric-glow-warning {
+    box-shadow: var(--glow-warning);
+  }
+
+  .metric-glow-destructive {
+    box-shadow: var(--glow-destructive);
+  }
+
+  .gradient-border {
+    position: relative;
+    background: hsl(var(--card));
+    border-radius: var(--radius);
+  }
+
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius);
+    padding: 1px;
+    background: linear-gradient(135deg, hsl(var(--primary) / 0.5), hsl(var(--accent) / 0.2));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted)) 0%,
+      hsl(var(--muted-foreground) / 0.1) 50%,
+      hsl(var(--muted)) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes call-ring {
+  0% { transform: scale(0.85); opacity: 0.7; }
+  70% { transform: scale(1.35); opacity: 0; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
+@keyframes call-phone-bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-2px) rotate(-8deg); }
+  75% { transform: translateY(-1px) rotate(8deg); }
+}
+
+@keyframes call-wave {
+  0%, 100% { height: 0.4rem; opacity: 0.45; }
+  50% { height: 1.75rem; opacity: 1; }
+}
+
+.call-ring-pulse {
+  animation: call-ring 1.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.call-ring-delay-1 {
+  animation-delay: 0.35s;
+}
+
+.call-ring-delay-2 {
+  animation-delay: 0.7s;
+}
+
+.call-phone-bob {
+  animation: call-phone-bob 1.2s ease-in-out infinite;
+}
+
+.call-wave-bar {
+  height: 0.4rem;
+  animation: call-wave 0.9s ease-in-out infinite;
+}

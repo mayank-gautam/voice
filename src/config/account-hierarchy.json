@@ -1,0 +1,76 @@
+{
+  "accounts": [
+    {
+      "accountId": "111111111111",
+      "accountName": "Development Account",
+      "roles": [
+        {
+          "roleId": "role-dev-admin",
+          "roleName": "DevelopmentAdmin",
+          "projects": [
+            {
+              "projectId": "project-alpha",
+              "projectName": "Project Alpha",
+              "groups": ["group-alpha-1", "group-alpha-2"]
+            },
+            {
+              "projectId": "project-beta",
+              "projectName": "Project Beta",
+              "groups": ["group-beta-1"]
+            }
+          ]
+        },
+        {
+          "roleId": "role-dev-viewer",
+          "roleName": "DevelopmentViewer",
+          "projects": [
+            {
+              "projectId": "project-alpha-readonly",
+              "projectName": "Project Alpha (Read Only)",
+              "groups": ["group-alpha-1"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accountId": "222222222222",
+      "accountName": "Production Account",
+      "roles": [
+        {
+          "roleId": "role-prod-admin",
+          "roleName": "ProductionAdmin",
+          "projects": [
+            {
+              "projectId": "project-gamma",
+              "projectName": "Project Gamma",
+              "groups": ["group-gamma-1", "group-gamma-2"]
+            },
+            {
+              "projectId": "project-delta",
+              "projectName": "Project Delta",
+              "groups": ["group-delta-1"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accountId": "333333333333",
+      "accountName": "Testing Account",
+      "roles": [
+        {
+          "roleId": "role-test-user",
+          "roleName": "TestingUser",
+          "projects": [
+            {
+              "projectId": "project-epsilon",
+              "projectName": "Project Epsilon",
+              "groups": ["group-epsilon-1"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
