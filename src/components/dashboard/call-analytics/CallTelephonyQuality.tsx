@@ -74,6 +74,7 @@ interface Props {
   qualityScore?: number;
   loading?: boolean;
   error?: string | null;
+  recordingError?: string | null;
   audioUrl?: string | null;
 }
 
@@ -82,6 +83,7 @@ export const CallTelephonyQuality = ({
   qualityScore = 0,
   loading,
   error,
+  recordingError,
   audioUrl,
 }: Props) => {
   if (loading) {
@@ -118,14 +120,18 @@ export const CallTelephonyQuality = ({
         </p>
       )}
 
-      {audioUrl && (
+      {audioUrl ? (
         <div className="glass-card border border-border/50 rounded-xl p-3">
           <p className="text-xs font-medium mb-2">Call recording</p>
           <audio controls className="w-full h-9" src={audioUrl} preload="metadata">
             Your browser does not support audio playback.
           </audio>
         </div>
-      )}
+      ) : recordingError ? (
+        <p className="text-xs text-muted-foreground border border-border/50 bg-muted/20 rounded-lg px-3 py-2">
+          {recordingError}
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <Chip label="Codec" value={telephony.codec || "—"} icon={<Radio className="w-3 h-3" />} />

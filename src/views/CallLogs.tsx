@@ -47,11 +47,20 @@ type LogEvent = {
   message: string;
   logStreamName: string;
   logGroupName?: string;
+  level?: string;
+  service?: string;
 };
 
 const PAGE_SIZE = 100;
 
-function inferLevel(message: string): "info" | "warn" | "error" | "debug" {
+function inferLevel(message: string, explicit?: string): "info" | "warn" | "error" | "debug" {
+  if (explicit) {
+    const l = explicit.toLowerCase();
+    if (l.includes("error") || l.includes("fatal")) return "error";
+    if (l.includes("warn")) return "warn";
+    if (l.includes("debug") || l.includes("trace")) return "debug";
+    if (l.includes("info")) return "info";
+  }
   const m = message.toLowerCase();
   if (/\berror\b|\bfatal\b|\bexception\b|\bfailed\b/.test(m)) return "error";
   if (/\bwarn\b|\bwarning\b/.test(m)) return "warn";
@@ -59,8 +68,9 @@ function inferLevel(message: string): "info" | "warn" | "error" | "debug" {
   return "info";
 }
 
-/** Prefer last segment of log group, else stream name — shown as "Service". */
+/** Prefer API service, then last segment of log group, else stream name. */
 function inferService(e: LogEvent): string {
+  if (e.service?.trim()) return e.service.trim();
   return inferServiceName(e);
 }
 
@@ -289,7 +299,7 @@ const CallLogs = () => {
         const ts = e.timestamp
           ? format(new Date(e.timestamp), "yyyy-MM-dd HH:mm:ss.SSS")
           : "";
-        const level = inferLevel(e.message);
+        const level = inferLevel(e.message, e.level);
         const service = inferService(e);
         const group = (e.logGroupName || "").replace(/\t/g, " ");
         const stream = (e.logStreamName || "").replace(/\t/g, " ");
@@ -344,7 +354,7 @@ const CallLogs = () => {
     () =>
       events.map((e) => ({
         ...e,
-        level: inferLevel(e.message),
+        level: inferLevel(e.message, e.level),
         service: inferService(e),
         displayMessage: extractDisplayMessage(e.message),
       })),

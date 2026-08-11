@@ -44,7 +44,8 @@ export async function GET(request: NextRequest, ctx: Ctx) {
   const sp = request.nextUrl.searchParams;
   const start = sp.get("start");
   const end = sp.get("end");
-  const offsetRaw = sp.get("offset") ?? sp.get("cursor");
+  const offsetRaw = sp.get("offset");
+  const cursorRaw = sp.get("cursor");
   const limitRaw = sp.get("limit");
   const loadAll = sp.get("all") === "1" || sp.get("all") === "true";
 
@@ -72,9 +73,14 @@ export async function GET(request: NextRequest, ctx: Ctx) {
         end: end ? Number(end) : undefined,
         limit,
         offset,
+        cursor: cursorRaw,
       },
     );
-    return NextResponse.json({ callSid: id, ...result });
+    return NextResponse.json({
+      callSid: id,
+      projectId: project.id,
+      ...result,
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to fetch CloudWatch logs";
     return apiError(message, 502, "CLOUDWATCH_ERROR");

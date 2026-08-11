@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -81,9 +81,18 @@ const CallDetails = () => {
   const [telephonyLoading, setTelephonyLoading] = useState(false);
   const [telephonyError, setTelephonyError] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const audioObjectUrlRef = useRef<string | null>(null);
 
   const transcript = generateTranscript();
   const projectQs = activeId ? `projectId=${encodeURIComponent(activeId)}` : "";
+
+  const revokeAudioObjectUrl = useCallback(() => {
+    if (audioObjectUrlRef.current) {
+      URL.revokeObjectURL(audioObjectUrlRef.current);
+      audioObjectUrlRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -121,8 +130,10 @@ const CallDetails = () => {
       setTelephony(EMPTY_TELEPHONY);
       setQualityScore(null);
       setTelephonyAvailable(false);
+      revokeAudioObjectUrl();
       setAudioUrl(null);
       setTelephonyError(null);
+      setRecordingError(null);
       return;
     }
 
@@ -130,60 +141,100 @@ const CallDetails = () => {
     const loadTelemetry = async () => {
       setTelephonyLoading(true);
       setTelephonyError(null);
+      setRecordingError(null);
+      revokeAudioObjectUrl();
+      setAudioUrl(null);
+
       const qs = projectQs ? `?${projectQs}` : "";
       try {
         const [telRes, recRes] = await Promise.all([
           fetch(`/api/calls/${encodeURIComponent(id)}/telephony${qs}`, { credentials: "include" }),
           fetch(`/api/calls/${encodeURIComponent(id)}/recording${qs}`, { credentials: "include" }),
         ]);
-        const telData = await telRes.json();
+
         let telErr: string | null = null;
-        if (telRes.ok && telData.telephony) {
-          if (!cancelled) {
-            setTelephony(telData.telephony);
-            setQualityScore(typeof telData.qualityScore === "number" ? telData.qualityScore : null);
-            setTelephonyAvailable(true);
+        try {
+          const telData = await telRes.json();
+          if (telRes.ok && telData.available !== false && telData.telephony) {
+            if (!cancelled) {
+              setTelephony(telData.telephony);
+              setQualityScore(typeof telData.qualityScore === "number" ? telData.qualityScore : null);
+              setTelephonyAvailable(true);
+            }
+          } else if (!cancelled) {
+            const code = telData?.error?.code as string | undefined;
+            telErr =
+              telData?.message ||
+              (code === "INSIGHTS_NOT_FOUND" || telRes.status === 404
+                ? "Voice Insights summary is not available for this call yet (or Insights is not enabled)."
+                : telData?.error?.message || "Telephony insights unavailable");
+            setTelephony(EMPTY_TELEPHONY);
+            setQualityScore(null);
+            setTelephonyAvailable(false);
           }
-        } else if (!cancelled) {
-          const code = telData?.error?.code as string | undefined;
-          telErr =
-            code === "INSIGHTS_NOT_FOUND" || telRes.status === 404
-              ? "Voice Insights summary is not available for this call yet (or Insights is not enabled)."
-              : telData?.error?.message || "Telephony insights unavailable";
-          setTelephony(EMPTY_TELEPHONY);
-          setQualityScore(null);
-          setTelephonyAvailable(false);
+        } catch {
+          telErr = "Telephony insights unavailable";
+          if (!cancelled) {
+            setTelephony(EMPTY_TELEPHONY);
+            setQualityScore(null);
+            setTelephonyAvailable(false);
+          }
         }
 
-        const recData = await recRes.json();
         let hasAudio = false;
-        if (recRes.ok && recData.recording?.proxyUrl && !cancelled) {
-          let url = recData.recording.proxyUrl as string;
-          if (activeId && !url.includes("projectId=")) {
-            url += `${url.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(activeId)}`;
+        let recErr: string | null = null;
+        try {
+          const recData = await recRes.json();
+          const proxyPath =
+            recRes.ok && recData.recording?.proxyUrl
+              ? String(recData.recording.proxyUrl)
+              : null;
+
+          if (proxyPath && !cancelled) {
+            let proxyUrl = proxyPath;
+            if (activeId && !proxyUrl.includes("projectId=")) {
+              proxyUrl += `${proxyUrl.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(activeId)}`;
+            }
+
+            // Fetch with credentials and use a blob URL — <audio src> alone can fail
+            // silently when the proxy needs the session cookie.
+            const audioRes = await fetch(proxyUrl, { credentials: "include" });
+            if (!audioRes.ok) {
+              throw new Error(`Recording proxy failed (${audioRes.status})`);
+            }
+            const blob = await audioRes.blob();
+            if (cancelled) return;
+            const objectUrl = URL.createObjectURL(blob);
+            audioObjectUrlRef.current = objectUrl;
+            setAudioUrl(objectUrl);
+            hasAudio = true;
+          } else if (!cancelled) {
+            recErr =
+              recData?.message ||
+              recData?.error?.message ||
+              "Call recording is not available for this call.";
+            setAudioUrl(null);
           }
-          setAudioUrl(url);
-          hasAudio = true;
-        } else if (!cancelled) {
-          setAudioUrl(null);
+        } catch (e) {
+          if (!cancelled) {
+            recErr = e instanceof Error ? e.message : "Failed to load call recording";
+            setAudioUrl(null);
+          }
         }
 
         if (!cancelled) {
-          if (telErr) {
-            const audioNote = hasAudio ? "" : " Call recording is not available for this call.";
-            setTelephonyError(`${telErr}${audioNote}`);
-          } else if (!hasAudio) {
-            setTelephonyError("Call recording is not available for this call.");
-          } else {
-            setTelephonyError(null);
-          }
+          setTelephonyError(telErr);
+          setRecordingError(hasAudio ? null : recErr);
         }
       } catch (e) {
         if (!cancelled) {
           setTelephonyError(e instanceof Error ? e.message : "Failed to load telephony");
+          setRecordingError(null);
           setTelephony(EMPTY_TELEPHONY);
           setQualityScore(null);
           setTelephonyAvailable(false);
+          revokeAudioObjectUrl();
+          setAudioUrl(null);
         }
       } finally {
         if (!cancelled) setTelephonyLoading(false);
@@ -193,8 +244,9 @@ const CallDetails = () => {
     void loadTelemetry();
     return () => {
       cancelled = true;
+      revokeAudioObjectUrl();
     };
-  }, [id, activeId, projectQs]);
+  }, [id, activeId, projectQs, revokeAudioObjectUrl]);
 
   if (loadingCall) {
     return (
@@ -419,6 +471,7 @@ const CallDetails = () => {
               qualityScore={qualityScore ?? 0}
               loading={telephonyLoading}
               error={telephonyError}
+              recordingError={recordingError}
               audioUrl={audioUrl}
             />
           </TabsContent>

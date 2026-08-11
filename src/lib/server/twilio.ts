@@ -8,10 +8,13 @@ import {
 export type { CallEnvTag };
 
 export function getTwilioClientFromConfig(config: TwilioEnvConfig) {
-  return twilio(config.accountSid, config.authToken, {
-    region: config.region,
-    edge: config.edge,
-  });
+  // us1 works best against the default api.twilio.com host. Forcing edge/region
+  // can break media/Insights adjacent REST calls for many accounts.
+  const region = config.region?.trim();
+  const edge = config.edge?.trim();
+  const useRegional = Boolean(region && region !== "us1");
+
+  return twilio(config.accountSid, config.authToken, useRegional ? { region, edge } : undefined);
 }
 
 export type CallListItem = {
@@ -153,7 +156,9 @@ function edgeMetrics(metrics: Record<string, unknown> | undefined, leg: "inbound
 /** Map Twilio Voice Insights summary → UI telephony shape + quality score 0–100. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function mapInsightsToTelephony(summary: any): { telephony: TelephonyPayload; qualityScore: number } {
-  const sip = summary?.sip_edge || summary?.carrier_edge || {};
+  // PSTN/SIP often use sip_edge or carrier_edge; Client/WebRTC use client_edge.
+  const sip =
+    summary?.sip_edge || summary?.carrier_edge || summary?.client_edge || summary?.sdk_edge || {};
   const metrics = sip?.metrics || {};
   const props = sip?.properties || {};
   const callProps = summary?.properties || {};
@@ -162,13 +167,13 @@ export function mapInsightsToTelephony(summary: any): { telephony: TelephonyPayl
   const outbound = edgeMetrics(metrics, "outbound");
 
   const telephony: TelephonyPayload = {
-    codec: inbound.codec || outbound.codec || "unknown",
-    mediaRegion: String(props.media_region || ""),
-    signalingRegion: String(props.signaling_region || ""),
-    edgeLocation: String(props.edge_location || ""),
-    pddMs: Number(callProps.pdd_ms ?? 0),
-    disconnectedBy: String(callProps.disconnected_by || "unknown"),
-    lastSipResponse: Number(callProps.last_sip_response_num ?? 0),
+    codec: inbound.codec || outbound.codec || String(props.codec_name || "unknown"),
+    mediaRegion: String(props.media_region || callProps.media_region || ""),
+    signalingRegion: String(props.signaling_region || callProps.signaling_region || ""),
+    edgeLocation: String(props.edge_location || callProps.edge_location || ""),
+    pddMs: Number(callProps.pdd_ms ?? props.pdd_ms ?? 0),
+    disconnectedBy: String(callProps.disconnected_by || props.disconnected_by || "unknown"),
+    lastSipResponse: Number(callProps.last_sip_response_num ?? props.last_sip_response_num ?? 0),
     inbound: {
       jitterAvgMs: inbound.jitterAvgMs,
       jitterMaxMs: inbound.jitterMaxMs,
@@ -197,42 +202,70 @@ export function mapInsightsToTelephony(summary: any): { telephony: TelephonyPayl
   return { telephony, qualityScore: score };
 }
 
+/** Twilio REST API host for media downloads (recordings). */
+export function twilioRestApiBase(config: TwilioEnvConfig): string {
+  const region = config.region?.trim();
+  const edge = config.edge?.trim();
+  if (region && region !== "us1" && edge) {
+    return `https://api.${edge}.${region}.twilio.com`;
+  }
+  return "https://api.twilio.com";
+}
+
+/**
+ * Fetch Voice Insights Call Summary.
+ * Tries complete first, then partial / unfiltered — many calls 404 when forced to complete-only.
+ */
 export async function fetchVoiceInsightsSummary(
   twilioConfig: TwilioEnvConfig,
   callSid: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
-  const url = `https://insights.twilio.com/v1/Voice/${encodeURIComponent(callSid)}/Summary?ProcessingState=complete`;
   const auth = Buffer.from(`${twilioConfig.accountSid}:${twilioConfig.authToken}`).toString("base64");
-  const res = await fetch(url, {
-    headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
-  });
-  if (!res.ok) {
+  const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
+  const base = `https://insights.twilio.com/v1/Voice/${encodeURIComponent(callSid)}/Summary`;
+  const urls = [
+    `${base}?ProcessingState=complete`,
+    `${base}?ProcessingState=partial`,
+    base,
+  ];
+
+  let lastError: Error | null = null;
+
+  for (const url of urls) {
+    const res = await fetch(url, { headers });
+    if (res.ok) {
+      return res.json();
+    }
+
     const text = await res.text();
     let twilioCode: number | undefined;
     let twilioMessage = text;
     try {
-      const parsed = JSON.parse(text) as { code?: number; message?: string; status?: number };
+      const parsed = JSON.parse(text) as { code?: number; message?: string };
       twilioCode = parsed.code;
       if (parsed.message) twilioMessage = parsed.message;
     } catch {
       // keep raw text
     }
 
-    if (res.status === 404 || twilioCode === 20404) {
-      throw Object.assign(
-        new Error(
-          "Voice Insights summary is not available for this call yet (or Insights is not enabled for this account)."
-        ),
-        { status: 404, code: "INSIGHTS_NOT_FOUND", twilioCode: 20404 }
-      );
-    }
+    const notFound = res.status === 404 || twilioCode === 20404;
+    lastError = Object.assign(
+      new Error(
+        notFound
+          ? "Voice Insights summary is not available for this call yet (or Insights is not enabled for this account)."
+          : twilioMessage || `Insights API ${res.status}`,
+      ),
+      {
+        status: notFound ? 404 : res.status,
+        code: notFound ? "INSIGHTS_NOT_FOUND" : "INSIGHTS_ERROR",
+        twilioCode,
+      },
+    );
 
-    throw Object.assign(new Error(twilioMessage || `Insights API ${res.status}`), {
-      status: res.status,
-      code: "INSIGHTS_ERROR",
-      twilioCode,
-    });
+    // Only continue the fallback chain for not-found; other errors are terminal.
+    if (!notFound) break;
   }
-  return res.json();
+
+  throw lastError || new Error("Voice Insights summary is not available for this call.");
 }
