@@ -27,12 +27,13 @@ export function toUserFacingMessage(
 
   /* ---- Already clear product copy (pass through) ---- */
   if (
-    /^(no project selected|select a |enter a |configure |give the |numbers? must|to' and 'from|trace not found)/i.test(
+    /^Telephone credentials not configured$/i.test(message) ||
+    (/^(no project selected|select a |enter a |configure |give the |numbers? must|to' and 'from|trace not found)/i.test(
       message,
     ) &&
-    !/twilio|cloudwatch|status\s*\d{3}|\/api\//i.test(message)
+      !/twilio|cloudwatch|status\s*\d{3}|\/api\//i.test(message))
   ) {
-    // still soften a few known technical phrases below
+    return message;
   }
 
   /* ---- Auth / SSO / session ---- */

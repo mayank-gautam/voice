@@ -8,20 +8,25 @@ import {
 } from "react";
 
 import { useRouter } from "next/navigation";
-import { Building2, FolderKanban, KeyRound, Loader2 } from "lucide-react";
+import { Building2, KeyRound, Loader2 } from "lucide-react";
 
 import {
   areAwsCredentialsExpired,
   clearAllCredentials,
   clearAwsSsoToken,
   clearStoredAccountCredentials,
+  getAllCredentials,
+  getAwsSsoTokenSnapshot,
   getCredentials,
   getSelectedCredentials,
   getValidAwsSsoToken,
+  refreshStoredAwsSsoToken,
   saveAwsSsoToken,
   saveAwsCredentials,
   setSelectedCredentials,
   setActiveProjectIdSetting,
+  type AwsSsoToken,
+  type StoredCredentials,
 } from "@/lib/credentials-store";
 
 import { PROJECTS_CHANGED_EVENT } from "@/lib/projectConfig";
@@ -551,11 +556,17 @@ export function DeviceLogin({
       const data = (await response.json().catch(() => ({}))) as {
         success?: boolean;
         projects?: MappedProjectOption[];
-        error?: { message?: string };
+        error?: { message?: string; code?: string };
         message?: string;
       };
 
       if (!response.ok || data.success === false) {
+        if (
+          response.status === 404 ||
+          data?.error?.code === "NO_MAPPING"
+        ) {
+          throw new Error("Telephone credentials not configured");
+        }
         throw new Error(
           data?.error?.message ||
             data?.message ||
@@ -1035,24 +1046,36 @@ export function DeviceLogin({
   async function handleUseThisAccount(
     account: AwsAccount,
     role: AwsRole,
-    projectId: string,
   ): Promise<void> {
-    const activeProjectId = projectId.trim();
-    if (!activeProjectId) {
-      setState({
-        kind: "error",
-        message:
-          "Select a project mapped for this account and role in twilio-mappings.json.",
-        retryType: "projects",
-        account,
-        role,
-      });
-      return;
-    }
+    let activeProjectId = "";
 
     try {
       selectedAccountRef.current = account;
       selectedRoleRef.current = role;
+
+      setState({
+        kind: "creating-credentials",
+        account,
+        role,
+        projectId: "",
+      });
+
+      const projects = await loadProjectsForRole(account, role);
+      const mapped =
+        projects.find((project) => project.hasTwilio) || projects[0] || null;
+
+      if (!mapped || !mapped.hasTwilio) {
+        setState({
+          kind: "error",
+          message: "Telephone credentials not configured",
+          retryType: "projects",
+          account,
+          role,
+        });
+        return;
+      }
+
+      activeProjectId = mapped.id;
 
       setState({
         kind: "creating-credentials",
@@ -1206,16 +1229,25 @@ export function DeviceLogin({
         error instanceof Error ? error.message : "unknown error",
       );
 
+      const rawMessage =
+        error instanceof Error
+          ? error.message
+          : "Unable to authorize the selected AWS role.";
+
+      const noMapping =
+        /no projects|no mapping|NO_MAPPING|telephone credentials/i.test(
+          rawMessage,
+        );
+
       setState({
         kind: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to authorize the selected AWS role.",
+        message: noMapping
+          ? "Telephone credentials not configured"
+          : rawMessage,
         retryType: "credentials",
         account,
         role,
-        projectId: activeProjectId,
+        projectId: activeProjectId || undefined,
       });
     }
   }
@@ -1232,8 +1264,7 @@ export function DeviceLogin({
     try {
       switch (state.retryType) {
         case "accounts":
-        case "roles":
-        case "projects": {
+        case "roles": {
           const cachedToken = await getValidAwsSsoToken();
           if (!cachedToken) {
             await startLogin();
@@ -1243,13 +1274,10 @@ export function DeviceLogin({
           return;
         }
 
-        case "credentials": {
-          if (state.account && state.role && state.projectId) {
-            await handleUseThisAccount(
-              state.account,
-              state.role,
-              state.projectId,
-            );
+        case "credentials":
+        case "projects": {
+          if (state.account && state.role) {
+            await handleUseThisAccount(state.account, state.role);
             return;
           }
 
@@ -1356,11 +1384,14 @@ export function DeviceLogin({
         onLogout={() => void logout()}
         resolveAccessToken={resolveAccessToken}
         loadRoles={loadRolesForAccount}
-        loadProjects={loadProjectsForRole}
-        onUseThisAccount={(account, role, projectId) =>
-          void handleUseThisAccount(account, role, projectId)
+        onUseThisAccount={(account, role) =>
+          void handleUseThisAccount(account, role)
         }
         onTokenExpired={handleTokenExpired}
+        onAccessTokenUpdated={(token) => {
+          accessTokenRef.current = token.accessToken;
+          regionRef.current = token.region;
+        }}
       />
     );
   }
@@ -1496,10 +1527,11 @@ export function DeviceLogin({
     <section className="glass-card animate-slide-up flex w-full max-w-md flex-col items-center gap-5 p-6 text-center sm:p-8">
       <div className="space-y-2">
         <h2 className="text-lg font-semibold tracking-tight text-foreground">
-          Sign in with AWS
+          SSO device login
         </h2>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Sign in with your organization account to choose an account and role.
+          Approve a one-time code once. Your session is saved in this browser so
+          you can switch accounts without signing in again.
         </p>
       </div>
       {initialSession?.accountId && (
@@ -1533,6 +1565,23 @@ export function DeviceLogin({
 /* Account & Role Selection UI                                                */
 /* -------------------------------------------------------------------------- */
 
+function formatExpiryLabel(iso: string | undefined | null): string {
+  if (!iso) return "—";
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return "—";
+
+  const absolute = when.toLocaleString();
+  const remainingMs = when.getTime() - Date.now();
+  if (remainingMs <= 0) return `${absolute} (expired)`;
+
+  const totalMinutes = Math.floor(remainingMs / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const left =
+    hours > 0 ? `${hours}h ${minutes}m left` : `${Math.max(minutes, 1)}m left`;
+  return `${absolute} (${left})`;
+}
+
 function SignOutButton({
   loading,
   onClick,
@@ -1558,9 +1607,9 @@ function AccountScopePicker({
   onLogout,
   resolveAccessToken,
   loadRoles,
-  loadProjects,
   onUseThisAccount,
   onTokenExpired,
+  onAccessTokenUpdated,
 }: {
   accounts: AwsAccount[];
   isLoggingOut: boolean;
@@ -1571,29 +1620,50 @@ function AccountScopePicker({
     accessToken: string,
     region: string,
   ) => Promise<AwsRole[]>;
-  loadProjects: (
-    account: AwsAccount,
-    role: AwsRole,
-  ) => Promise<MappedProjectOption[]>;
-  onUseThisAccount: (
-    account: AwsAccount,
-    role: AwsRole,
-    projectId: string,
-  ) => void;
+  onUseThisAccount: (account: AwsAccount, role: AwsRole) => void;
   onTokenExpired: () => void;
+  onAccessTokenUpdated: (token: AwsSsoToken) => void;
 }) {
   const [accountId, setAccountId] = useState(accounts[0]?.accountId || "");
   const [roleName, setRoleName] = useState("");
-  const [projectId, setProjectId] = useState("");
   const [roles, setRoles] = useState<AwsRole[]>([]);
-  const [projects, setProjects] = useState<MappedProjectOption[]>([]);
   const [loadingRoles, setLoadingRoles] = useState(false);
-  const [loadingProjects, setLoadingProjects] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [cached, setCached] = useState<StoredCredentials[]>([]);
+  const [selectedCachedId, setSelectedCachedId] = useState<string | null>(null);
+  const [ssoToken, setSsoToken] = useState<AwsSsoToken | null>(null);
+  const [activeCreds, setActiveCreds] = useState<StoredCredentials | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
 
   const selectedAccount = accounts.find((account) => account.accountId === accountId);
   const selectedRole = roles.find((role) => role.roleName === roleName);
+
+  const reloadCredentialViews = useCallback(async () => {
+    const [all, selected, token] = await Promise.all([
+      getAllCredentials(),
+      getSelectedCredentials(),
+      getAwsSsoTokenSnapshot(),
+    ]);
+    setCached(all);
+    setActiveCreds(selected);
+    setSsoToken(token);
+    if (selected) {
+      setSelectedCachedId(selected.id);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reloadCredentialViews();
+  }, [reloadCredentialViews]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((value) => value + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (!accounts.some((account) => account.accountId === accountId)) {
@@ -1609,8 +1679,6 @@ function AccountScopePicker({
       if (!account) {
         setRoles([]);
         setRoleName("");
-        setProjects([]);
-        setProjectId("");
         return;
       }
 
@@ -1618,8 +1686,6 @@ function AccountScopePicker({
       setError(null);
       setRoles([]);
       setRoleName("");
-      setProjects([]);
-      setProjectId("");
 
       try {
         const token = await resolveAccessToken();
@@ -1636,7 +1702,11 @@ function AccountScopePicker({
         if (cancelled) return;
 
         setRoles(nextRoles);
-        setRoleName(nextRoles[0]?.roleName || "");
+        setRoleName((prev) =>
+          nextRoles.some((role) => role.roleName === prev)
+            ? prev
+            : nextRoles[0]?.roleName || "",
+        );
       } catch (err) {
         if (cancelled) return;
         const message =
@@ -1658,262 +1728,381 @@ function AccountScopePicker({
   }, [accountId, accounts, loadRoles, resolveAccessToken, onTokenExpired]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function run() {
-      const account = accounts.find((item) => item.accountId === accountId);
-      const role = roles.find((item) => item.roleName === roleName);
-      if (!account || !role) {
-        setProjects([]);
-        setProjectId("");
-        return;
-      }
-
-      setLoadingProjects(true);
-      setError(null);
-      setProjects([]);
-      setProjectId("");
-
-      try {
-        // mappings["accountId:roleName"].projects — first listed project is preselected.
-        // Do not use JSON defaultProject.
-        const loaded = await loadProjects(account, role);
-        if (cancelled) return;
-
-        setProjects(loaded);
-        setProjectId(loaded[0]?.id || "");
-
-        if (loaded.length === 0) {
-          setError(
-            "No projects are available for this account and role. Try another role or contact your admin.",
-          );
-        }
-      } catch (err) {
-        if (cancelled) return;
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Unable to load projects for this account and role.",
-        );
-      } finally {
-        if (!cancelled) setLoadingProjects(false);
-      }
+    if (!selectedAccount || !selectedRole) return;
+    const match = cached.find(
+      (item) =>
+        item.accountId === selectedAccount.accountId &&
+        item.roleName === selectedRole.roleName,
+    );
+    if (match) {
+      setSelectedCachedId(match.id);
+      setActiveCreds(match);
     }
-
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [accountId, roleName, accounts, roles, loadProjects]);
+  }, [selectedAccount, selectedRole, cached]);
 
   const continueToApp = () => {
-    if (!selectedAccount || !selectedRole || !projectId.trim() || pending) {
+    if (!selectedAccount || !selectedRole || pending) {
       return;
     }
     setPending(true);
     setError(null);
-    onUseThisAccount(selectedAccount, selectedRole, projectId.trim());
+    onUseThisAccount(selectedAccount, selectedRole);
   };
 
-  const busy = loadingRoles || loadingProjects || pending;
-  const canContinue = Boolean(
-    selectedAccount && selectedRole && projectId.trim() && !busy,
-  );
-  const selectedProject = projects.find((project) => project.id === projectId);
-  const noAccounts = accounts.length === 0;
+  const selectCached = (item: StoredCredentials) => {
+    setSelectedCachedId(item.id);
+    setActiveCreds(item);
+    setAccountId(item.accountId);
+    setRoleName(item.roleName);
+    setError(null);
+    setRefreshMessage(null);
+    setRefreshError(null);
+  };
 
+  const refreshTokens = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRefreshMessage(null);
+    setRefreshError(null);
+
+    try {
+      const refreshed = await refreshStoredAwsSsoToken();
+      if (!refreshed) {
+        throw new Error(
+          "Unable to refresh your sign-in session. Please sign in again.",
+        );
+      }
+
+      onAccessTokenUpdated(refreshed);
+      setSsoToken(refreshed);
+
+      if (selectedAccount && selectedRole) {
+        const response = await fetch("/api/aws/role-credentials", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({
+            accessToken: refreshed.accessToken,
+            accountId: selectedAccount.accountId,
+            roleName: selectedRole.roleName,
+            region: refreshed.region,
+          }),
+        });
+
+        const result = await parseJsonResponse<RoleCredentialsApiResponse>(
+          response,
+          "Role credentials API",
+        );
+
+        if (response.ok && result.success && result.aws) {
+          const saved = await saveAwsCredentials({
+            accountId: selectedAccount.accountId,
+            accountName: selectedAccount.accountName,
+            roleName: selectedRole.roleName,
+            accessKeyId: result.aws.accessKeyId,
+            secretAccessKey: result.aws.secretAccessKey,
+            sessionToken: result.aws.sessionToken,
+            expiration: result.aws.expiration,
+          });
+          setActiveCreds(saved);
+          setSelectedCachedId(saved.id);
+        }
+      }
+
+      await reloadCredentialViews();
+      setRefreshMessage("Tokens refreshed successfully.");
+    } catch (err) {
+      setRefreshError(
+        toUserFacingMessage(
+          err instanceof Error ? err.message : "Unable to refresh tokens.",
+        ),
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Satisfy tick dependency for live remaining-time labels
+  void tick;
+
+  const busy = loadingRoles || pending || refreshing;
+  const canContinue = Boolean(selectedAccount && selectedRole && !busy);
+  const noAccounts = accounts.length === 0;
   const safeError = error ? toUserFacingMessage(error) : null;
+  const live = Boolean(
+    activeCreds && !areAwsCredentialsExpired(activeCreds.aws),
+  );
 
   return (
-    <section className="glass-card animate-slide-up flex h-full flex-col space-y-5 p-5 sm:p-6">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <h2 className="text-lg font-semibold tracking-tight text-foreground">
-            Choose AWS account & role
-          </h2>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            Select where to work, then continue into the app. Your SSO session
-            stays in this browser.
-          </p>
-        </div>
-        <SignOutButton loading={isLoggingOut} onClick={onLogout} />
-      </div>
-
-      {noAccounts ? (
-        <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-10 text-center">
-          <Building2 className="h-8 w-8 text-muted-foreground/70" aria-hidden />
-          <p className="text-sm font-medium text-foreground">No accounts available</p>
-          <p className="max-w-xs text-sm text-muted-foreground">
-            No accounts are available right now. Sign out and try again, or
-            contact your administrator.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-5">
-          <div
-            className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3"
-            aria-live="polite"
-          >
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-primary">
-              Current selection
+    <div className="grid w-full items-start gap-6 lg:grid-cols-2 lg:gap-8">
+      <section className="glass-card animate-slide-up flex h-full flex-col space-y-5 p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">
+              Choose AWS account & role
+            </h2>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              Pick an account and role. The mapped project is applied
+              automatically.
             </p>
-            <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-3">
-              <div className="min-w-0">
-                <dt className="text-xs text-muted-foreground">Account</dt>
-                <dd className="mt-0.5 truncate font-medium text-foreground">
-                  {selectedAccount
-                    ? selectedAccount.accountName || selectedAccount.accountId
-                    : "—"}
-                </dd>
-              </div>
-              <div className="min-w-0">
-                <dt className="text-xs text-muted-foreground">Role</dt>
-                <dd className="mt-0.5 truncate font-medium text-foreground">
-                  {loadingRoles ? "Loading…" : selectedRole?.roleName || "—"}
-                </dd>
-              </div>
-              <div className="min-w-0">
-                <dt className="text-xs text-muted-foreground">Project</dt>
-                <dd className="mt-0.5 truncate font-medium text-foreground">
-                  {loadingProjects
-                    ? "Loading…"
-                    : selectedProject?.name || projectId || "—"}
-                </dd>
-              </div>
-            </dl>
           </div>
+          <SignOutButton loading={isLoggingOut} onClick={onLogout} />
+        </div>
 
-          <div className="space-y-4">
-            <label className="block space-y-1.5">
-              <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                <Building2 className="h-3.5 w-3.5" aria-hidden />
-                Account
-              </span>
-              <select
-                className={selectClass}
-                value={accountId}
-                onChange={(event) => setAccountId(event.target.value)}
-                disabled={busy || accounts.length === 0}
-                aria-busy={busy}
-              >
-                {accounts.map((account) => (
-                  <option key={account.accountId} value={account.accountId}>
-                    {(account.accountName || "Account") +
-                      ` (${account.accountId})`}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block space-y-1.5">
-              <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                <KeyRound className="h-3.5 w-3.5" aria-hidden />
-                Role
-                {loadingRoles && (
-                  <Loader2
-                    className="h-3.5 w-3.5 animate-spin text-primary"
-                    aria-label="Loading roles"
-                  />
-                )}
-              </span>
-              <select
-                className={selectClass}
-                value={roleName}
-                onChange={(event) => setRoleName(event.target.value)}
-                disabled={busy || loadingRoles || roles.length === 0}
-                aria-busy={loadingRoles}
-              >
-                {loadingRoles ? (
-                  <option value="">Loading roles…</option>
-                ) : roles.length === 0 ? (
-                  <option value="">No roles in this account</option>
-                ) : (
-                  roles.map((role) => (
-                    <option
-                      key={`${role.accountId}:${role.roleName}`}
-                      value={role.roleName}
-                    >
-                      {role.roleName}
-                    </option>
-                  ))
-                )}
-              </select>
-              {!loadingRoles && roles.length === 0 && accountId ? (
-                <p className="text-xs text-muted-foreground">
-                  No roles are available for this account.
-                </p>
-              ) : null}
-            </label>
-
-            <label className="block space-y-1.5">
-              <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                <FolderKanban className="h-3.5 w-3.5" aria-hidden />
-                Project
-                {loadingProjects && (
-                  <Loader2
-                    className="h-3.5 w-3.5 animate-spin text-primary"
-                    aria-label="Loading projects"
-                  />
-                )}
-              </span>
-              <select
-                className={selectClass}
-                value={projectId}
-                onChange={(event) => setProjectId(event.target.value)}
-                disabled={busy || loadingProjects || projects.length === 0}
-                aria-busy={loadingProjects}
-              >
-                {loadingProjects ? (
-                  <option value="">Loading projects…</option>
-                ) : projects.length === 0 ? (
-                  <option value="">No projects available</option>
-                ) : (
-                  projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                      {project.hasTwilio ? "" : " (no Twilio)"}
-                    </option>
-                  ))
-                )}
-              </select>
-              {!loadingProjects &&
-              projects.length === 0 &&
-              selectedRole ? (
-                <p className="text-xs text-muted-foreground">
-                  No projects are available for this account and role. Try
-                  another role or contact your admin.
-                </p>
-              ) : null}
-            </label>
+        {noAccounts ? (
+          <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-10 text-center">
+            <Building2 className="h-8 w-8 text-muted-foreground/70" aria-hidden />
+            <p className="text-sm font-medium text-foreground">
+              No accounts available
+            </p>
+            <p className="max-w-xs text-sm text-muted-foreground">
+              No accounts are available right now. Sign out and try again, or
+              contact your administrator.
+            </p>
           </div>
+        ) : (
+          <div className="space-y-5">
+            <div className="space-y-4">
+              <label className="block space-y-1.5">
+                <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  <Building2 className="h-3.5 w-3.5" aria-hidden />
+                  Account
+                </span>
+                <select
+                  className={selectClass}
+                  value={accountId}
+                  onChange={(event) => setAccountId(event.target.value)}
+                  disabled={busy || accounts.length === 0}
+                >
+                  {accounts.map((account) => (
+                    <option key={account.accountId} value={account.accountId}>
+                      {(account.accountName || "Account") +
+                        ` (${account.accountId})`}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          {safeError && (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              <label className="block space-y-1.5">
+                <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  <KeyRound className="h-3.5 w-3.5" aria-hidden />
+                  Role
+                  {loadingRoles && (
+                    <Loader2
+                      className="h-3.5 w-3.5 animate-spin text-primary"
+                      aria-label="Loading roles"
+                    />
+                  )}
+                </span>
+                <select
+                  className={selectClass}
+                  value={roleName}
+                  onChange={(event) => setRoleName(event.target.value)}
+                  disabled={busy || loadingRoles || roles.length === 0}
+                >
+                  {loadingRoles ? (
+                    <option value="">Loading roles…</option>
+                  ) : roles.length === 0 ? (
+                    <option value="">No roles in this account</option>
+                  ) : (
+                    roles.map((role) => (
+                      <option
+                        key={`${role.accountId}:${role.roleName}`}
+                        value={role.roleName}
+                      >
+                        {role.roleName}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+            </div>
+
+            {safeError && (
+              <p
+                role="alert"
+                className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              >
+                {safeError}
+              </p>
+            )}
+
+            <button
+              type="button"
+              className={cn(primaryButtonClass, "w-full")}
+              disabled={!canContinue}
+              onClick={continueToApp}
             >
-              {safeError}
-            </p>
-          )}
+              {pending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  Opening…
+                </>
+              ) : (
+                "Use this account"
+              )}
+            </button>
 
+            <div className="space-y-3 border-t border-border/60 pt-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Cached role credentials (IndexedDB)
+              </p>
+              {cached.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No cached role credentials yet. Use this account to store
+                  them.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {cached.map((item) => {
+                    const selected = item.id === selectedCachedId;
+                    const label = `${item.accountName || item.accountId} · ${item.roleName}`;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => selectCached(item)}
+                        className={cn(
+                          "rounded-full border px-4 py-2 text-left text-sm transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          selected
+                            ? "border-primary/40 bg-primary/10 text-foreground"
+                            : "border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                        )}
+                      >
+                        <span className="block truncate font-medium text-foreground">
+                          {label}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {formatExpiryLabel(item.aws.expiration)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="glass-card animate-slide-up flex h-full flex-col space-y-5 p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">
+              Active AWS credentials
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Session and role credentials stored in this browser.
+            </p>
+          </div>
+          {live ? (
+            <span className="rounded-full bg-primary/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-primary">
+              Live
+            </span>
+          ) : (
+            <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Idle
+            </span>
+          )}
+        </div>
+
+        <dl className="space-y-3 text-sm">
+          <div>
+            <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Account
+            </dt>
+            <dd className="mt-1 font-medium text-foreground">
+              {activeCreds
+                ? `${activeCreds.accountName || "Account"} (${activeCreds.accountId})`
+                : selectedAccount
+                  ? `${selectedAccount.accountName || "Account"} (${selectedAccount.accountId})`
+                  : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Role
+            </dt>
+            <dd className="mt-1 truncate font-medium text-foreground">
+              {activeCreds?.roleName || selectedRole?.roleName || "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Refresh token
+            </dt>
+            <dd className="mt-1 text-foreground">
+              {ssoToken?.refreshToken
+                ? "Present in IndexedDB"
+                : "Not available"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Access key
+            </dt>
+            <dd className="mt-1 font-mono text-sm text-primary">
+              {activeCreds?.aws.accessKeyId || "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Role credentials expire
+            </dt>
+            <dd className="mt-1 text-foreground">
+              {formatExpiryLabel(activeCreds?.aws.expiration)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              SSO access token expires
+            </dt>
+            <dd className="mt-1 text-foreground">
+              {formatExpiryLabel(ssoToken?.expiresAt)}
+            </dd>
+          </div>
+        </dl>
+
+        {refreshMessage && (
+          <p className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-foreground">
+            {refreshMessage}
+          </p>
+        )}
+        {refreshError && (
+          <p
+            role="alert"
+            className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          >
+            {refreshError}
+          </p>
+        )}
+
+        <div className="mt-auto flex flex-col gap-2 sm:flex-row">
           <button
             type="button"
-            className={cn(primaryButtonClass, "w-full")}
+            className={cn(secondaryButtonClass, "flex-1")}
             disabled={!canContinue}
             onClick={continueToApp}
-            aria-disabled={!canContinue}
           >
-            {pending ? (
+            Use credentials
+          </button>
+          <button
+            type="button"
+            className={cn(primaryButtonClass, "flex-1")}
+            disabled={refreshing || !ssoToken?.refreshToken}
+            onClick={() => void refreshTokens()}
+          >
+            {refreshing ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                Opening…
+                Refreshing…
               </>
             ) : (
-              "Use This Account"
+              "Refresh now"
             )}
           </button>
         </div>
-      )}
-    </section>
+      </section>
+    </div>
   );
 }

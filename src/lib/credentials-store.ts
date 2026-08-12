@@ -929,6 +929,37 @@ async function refreshAwsSsoToken(token: AwsSsoToken): Promise<AwsSsoToken | nul
   }
 }
 
+/** Read the stored SSO token without refreshing (for UI display). */
+export async function getAwsSsoTokenSnapshot(): Promise<AwsSsoToken | null> {
+  const database = await getDatabase();
+  const setting = await database.get(SETTINGS_STORE, AWS_SSO_TOKEN_KEY);
+  if (!isAwsSsoToken(setting?.value)) {
+    return null;
+  }
+  const token = setting.value;
+  return {
+    accessToken: token.accessToken.trim(),
+    refreshToken: token.refreshToken?.trim() || undefined,
+    clientId: token.clientId?.trim() || undefined,
+    clientSecret: token.clientSecret?.trim() || undefined,
+    region: token.region.trim(),
+    expiresAt: token.expiresAt,
+    savedAt: token.savedAt,
+  };
+}
+
+/**
+ * Force-refresh the SSO access token (and refresh token when rotated)
+ * using the existing appSettings entry in IndexedDB. Does not create another store.
+ */
+export async function refreshStoredAwsSsoToken(): Promise<AwsSsoToken | null> {
+  const snapshot = await getAwsSsoTokenSnapshot();
+  if (!snapshot) {
+    return null;
+  }
+  return refreshAwsSsoToken(snapshot);
+}
+
 /**
  * Returns a usable SSO access token from IndexedDB.
  * If the access token expired, refreshes it with the long-lived refresh token
