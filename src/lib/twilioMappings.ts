@@ -121,9 +121,22 @@ export function getMappingEntry(
   const account = accountId?.trim();
   const role = roleName?.trim();
   if (!account || !role) return null;
-  const entry = file.mappings[mappingKey(account, role)];
-  if (!entry || typeof entry !== "object") return null;
-  return entry;
+
+  const exact = file.mappings[mappingKey(account, role)];
+  if (exact && typeof exact === "object") return exact;
+
+  // Fallback: case-insensitive role match for the same account id.
+  const prefix = `${account}:`;
+  const roleLower = role.toLowerCase();
+  for (const [key, entry] of Object.entries(file.mappings || {})) {
+    if (!key.startsWith(prefix) || !entry || typeof entry !== "object") continue;
+    const mappedRole = key.slice(prefix.length);
+    if (mappedRole.toLowerCase() === roleLower) {
+      return entry;
+    }
+  }
+
+  return null;
 }
 
 /** Accounts and roles present in mappings (no secrets). */
@@ -196,9 +209,9 @@ export function getMappedProject(
 }
 
 /**
- * @deprecated Ignored for active-project selection. Active project comes from
- * IndexedDB AppSettings (SSO Choose Project / project dropdown).
- * Returns an optional ops hint from JSON only — never invents a project id.
+ * @deprecated Not used to auto-activate a project. Optional ops hint only
+ * (e.g. preselect in the SSO project dropdown). Active project comes from
+ * the user's project selection → IndexedDB AppSettings.
  */
 export function getMappedDefaultProjectId(
   file: TwilioMappingsFile,

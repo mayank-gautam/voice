@@ -21,7 +21,6 @@ import {
   saveAwsCredentials,
   setSelectedCredentials,
   setActiveProjectIdSetting,
-  getActiveProjectIdSetting,
 } from "@/lib/credentials-store";
 
 import { PROJECTS_CHANGED_EVENT } from "@/lib/projectConfig";
@@ -532,7 +531,10 @@ export function DeviceLogin({
     async (
       account: AwsAccount,
       role: AwsRole,
-    ): Promise<MappedProjectOption[]> => {
+    ): Promise<{
+      projects: MappedProjectOption[];
+      defaultProjectId: string | null;
+    }> => {
       const response = await fetch("/api/mappings/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -546,6 +548,7 @@ export function DeviceLogin({
       const data = (await response.json().catch(() => ({}))) as {
         success?: boolean;
         projects?: MappedProjectOption[];
+        defaultProjectId?: string | null;
         error?: { message?: string };
         message?: string;
       };
@@ -558,44 +561,15 @@ export function DeviceLogin({
         );
       }
 
-      return data.projects || [];
+      return {
+        projects: data.projects || [],
+        defaultProjectId:
+          typeof data.defaultProjectId === "string"
+            ? data.defaultProjectId.trim() || null
+            : null,
+      };
     },
     [],
-  );
-
-  /**
-   * Prefer IndexedDB project when still mapped for this account/role;
-   * otherwise use the only mapped project, else require an explicit pick.
-   * Never uses JSON defaultProject.
-   */
-  const resolveProjectIdForRole = useCallback(
-    async (
-      account: AwsAccount,
-      role: AwsRole,
-      preferredProjectId?: string | null,
-    ): Promise<{ projectId: string | null; projects: MappedProjectOption[] }> => {
-      const projects = await loadProjectsForRole(account, role);
-      if (projects.length === 0) {
-        return { projectId: null, projects };
-      }
-
-      const preferred = preferredProjectId?.trim();
-      if (preferred && projects.some((project) => project.id === preferred)) {
-        return { projectId: preferred, projects };
-      }
-
-      const stored = await getActiveProjectIdSetting().catch(() => null);
-      if (stored && projects.some((project) => project.id === stored)) {
-        return { projectId: stored, projects };
-      }
-
-      if (projects.length === 1) {
-        return { projectId: projects[0].id, projects };
-      }
-
-      return { projectId: null, projects };
-    },
-    [loadProjectsForRole],
   );
 
   /* ------------------------------------------------------------------------ */
@@ -1380,7 +1354,7 @@ export function DeviceLogin({
         onLogout={() => void logout()}
         resolveAccessToken={resolveAccessToken}
         loadRoles={loadRolesForAccount}
-        resolveProjectId={resolveProjectIdForRole}
+        loadProjects={loadProjectsForRole}
         onUseThisAccount={(account, role, projectId) =>
           void handleUseThisAccount(account, role, projectId)
         }
@@ -1539,7 +1513,7 @@ function AccountScopePicker({
   onLogout,
   resolveAccessToken,
   loadRoles,
-  resolveProjectId,
+  loadProjects,
   onUseThisAccount,
   onTokenExpired,
 }: {
@@ -1552,11 +1526,13 @@ function AccountScopePicker({
     accessToken: string,
     region: string,
   ) => Promise<AwsRole[]>;
-  resolveProjectId: (
+  loadProjects: (
     account: AwsAccount,
     role: AwsRole,
-    preferredProjectId?: string | null,
-  ) => Promise<{ projectId: string | null; projects: MappedProjectOption[] }>;
+  ) => Promise<{
+    projects: MappedProjectOption[];
+    defaultProjectId: string | null;
+  }>;
   onUseThisAccount: (
     account: AwsAccount,
     role: AwsRole,
@@ -1569,6 +1545,7 @@ function AccountScopePicker({
   const [projectId, setProjectId] = useState("");
   const [roles, setRoles] = useState<AwsRole[]>([]);
   const [projects, setProjects] = useState<MappedProjectOption[]>([]);
+  const [defaultProjectId, setDefaultProjectId] = useState<string | null>(null);
   const [loadingRoles, setLoadingRoles] = useState(false);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1593,6 +1570,7 @@ function AccountScopePicker({
         setRoleName("");
         setProjects([]);
         setProjectId("");
+        setDefaultProjectId(null);
         return;
       }
 
@@ -1602,6 +1580,7 @@ function AccountScopePicker({
       setRoleName("");
       setProjects([]);
       setProjectId("");
+      setDefaultProjectId(null);
 
       try {
         const token = await resolveAccessToken();
@@ -1648,6 +1627,7 @@ function AccountScopePicker({
       if (!account || !role) {
         setProjects([]);
         setProjectId("");
+        setDefaultProjectId(null);
         return;
       }
 
@@ -1655,19 +1635,20 @@ function AccountScopePicker({
       setError(null);
       setProjects([]);
       setProjectId("");
+      setDefaultProjectId(null);
 
       try {
-        const resolved = await resolveProjectId(account, role);
+        // mappings["accountId:roleName"].projects → e.g. BCS, LFS
+        const loaded = await loadProjects(account, role);
         if (cancelled) return;
 
-        setProjects(resolved.projects);
-        if (resolved.projects.length === 0) {
+        setProjects(loaded.projects);
+        setDefaultProjectId(loaded.defaultProjectId);
+
+        if (loaded.projects.length === 0) {
           setError(
-            "No projects are mapped for this account and role in twilio-mappings.json.",
+            `No projects found in twilio-mappings for ${account.accountId}:${role.roleName}.`,
           );
-          setProjectId("");
-        } else {
-          setProjectId(resolved.projectId || "");
         }
       } catch (err) {
         if (cancelled) return;
@@ -1685,7 +1666,16 @@ function AccountScopePicker({
     return () => {
       cancelled = true;
     };
-  }, [accountId, roleName, accounts, roles, resolveProjectId]);
+  }, [accountId, roleName, accounts, roles, loadProjects]);
+
+  const openProject = (nextProjectId: string) => {
+    if (!selectedAccount || !selectedRole || !nextProjectId.trim() || pending) {
+      return;
+    }
+    setPending(true);
+    setError(null);
+    onUseThisAccount(selectedAccount, selectedRole, nextProjectId.trim());
+  };
 
   const busy = loadingRoles || loadingProjects || pending;
 
@@ -1700,8 +1690,11 @@ function AccountScopePicker({
             Choose account, role & project
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Roles come from AWS SSO. Projects load from twilio-mappings for the
-            selected role and open in the app.
+            After you pick a role, projects load from{" "}
+            <span className="font-mono text-xs">
+              twilio-mappings → accountId:roleName
+            </span>
+            . Selecting a project opens it.
           </p>
         </div>
         <SignOutButton loading={isLoggingOut} onClick={onLogout} />
@@ -1760,7 +1753,11 @@ function AccountScopePicker({
         <select
           className={selectClass}
           value={projectId}
-          onChange={(event) => setProjectId(event.target.value)}
+          onChange={(event) => {
+            const next = event.target.value;
+            setProjectId(next);
+            if (next) openProject(next);
+          }}
           disabled={busy || projects.length === 0}
         >
           {loadingProjects ? (
@@ -1769,14 +1766,13 @@ function AccountScopePicker({
             <option value="">No mapped projects</option>
           ) : (
             <>
-              {!projectId && (
-                <option value="" disabled>
-                  Select a project…
-                </option>
-              )}
+              <option value="" disabled>
+                Select a project to open…
+              </option>
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.name}
+                  {defaultProjectId === project.id ? " (default)" : ""}
                   {project.hasTwilio ? "" : " (no Twilio)"}
                 </option>
               ))}
@@ -1791,20 +1787,11 @@ function AccountScopePicker({
         </p>
       )}
 
-      <button
-        type="button"
-        className={cn(primaryButtonClass, "w-full sm:w-auto")}
-        disabled={
-          busy || !selectedAccount || !selectedRole || !projectId.trim()
-        }
-        onClick={() => {
-          if (!selectedAccount || !selectedRole || !projectId.trim()) return;
-          setPending(true);
-          onUseThisAccount(selectedAccount, selectedRole, projectId.trim());
-        }}
-      >
-        {pending ? "Opening project…" : "Use This Account"}
-      </button>
+      {pending && (
+        <p className="text-sm text-muted-foreground animate-pulse-glow">
+          Opening project…
+        </p>
+      )}
     </section>
   );
 }

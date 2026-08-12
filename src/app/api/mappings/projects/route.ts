@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiError } from "@/lib/server/api";
 import {
+  getDefaultMappedProjectId,
   getMappedProjectsForRole,
   mappingHasAccountRole,
 } from "@/lib/server/twilioMappings";
@@ -11,8 +12,8 @@ type Body = {
 };
 
 /**
- * List projects mapped for an AWS account + role (no Twilio secrets).
- * Does not suggest a default project — the user must choose one.
+ * List projects under mappings["accountId:roleName"].projects
+ * (no Twilio secrets). defaultProject is an optional UI hint only.
  */
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as Body;
@@ -32,12 +33,15 @@ export async function POST(request: NextRequest) {
   }
 
   const projects = await getMappedProjectsForRole(accountId, roleName);
+  const defaultProjectId = await getDefaultMappedProjectId(accountId, roleName);
 
   return NextResponse.json({
     success: true,
     accountId,
     roleName,
     projects,
+    /** Ops hint from JSON — does not auto-open; user must select a project. */
+    defaultProjectId,
     source: "twilio-mappings",
   });
 }
