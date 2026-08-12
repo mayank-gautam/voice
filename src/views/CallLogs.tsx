@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { toastError, toUserFacingMessage } from "@/lib/userFacingError";
 import { useProjects } from "@/lib/projectConfig";
 import {
   buildAwsCredentialHeaders,
@@ -148,7 +149,7 @@ const CallLogs = () => {
 
       const creds = await getActiveCredentials();
       if (creds.ok === false) {
-        toast.error(creds.message);
+        toastError(creds.message);
         await redirectToSsoForReauth({ logoutSession: false });
         return;
       }
@@ -193,9 +194,11 @@ const CallLogs = () => {
         return merged;
       });
 
-      if (data.message && data.configured === false) setError(data.message);
-      else if (data.message && page.length === 0 && !opts.append) setError(data.message);
-      else if (opts.append || opts.all) setError(null);
+      if (data.message && data.configured === false) {
+        setError(toUserFacingMessage(data.message));
+      } else if (data.message && page.length === 0 && !opts.append) {
+        setError(toUserFacingMessage(data.message));
+      } else if (opts.append || opts.all) setError(null);
       else if (!data.message) setError(null);
     },
     [callId, activeId, router]
@@ -214,7 +217,11 @@ const CallLogs = () => {
       setEvents([]);
       eventsLenRef.current = 0;
       setHasMore(false);
-      setError(e instanceof Error ? e.message : "Failed to load logs");
+      setError(
+        toUserFacingMessage(
+          e instanceof Error ? e.message : "Failed to load logs",
+        ),
+      );
     } finally {
       setLoading(false);
     }
@@ -228,7 +235,11 @@ const CallLogs = () => {
     try {
       await fetchPage({ offset: eventsLenRef.current, append: true });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load more logs");
+      setError(
+        toUserFacingMessage(
+          e instanceof Error ? e.message : "Failed to load more logs",
+        ),
+      );
     } finally {
       setLoadingMore(false);
       loadingMoreRef.current = false;
@@ -242,7 +253,11 @@ const CallLogs = () => {
     try {
       await fetchPage({ all: true, append: false });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load all logs");
+      setError(
+        toUserFacingMessage(
+          e instanceof Error ? e.message : "Failed to load all logs",
+        ),
+      );
     } finally {
       setLoadingAll(false);
     }
@@ -258,7 +273,7 @@ const CallLogs = () => {
 
       const creds = await getActiveCredentials();
       if (creds.ok === false) {
-        toast.error(creds.message);
+        toastError(creds.message);
         await redirectToSsoForReauth({ logoutSession: false });
         return;
       }
@@ -280,8 +295,9 @@ const CallLogs = () => {
       eventsLenRef.current = allEvents.length;
 
       if (data.message && allEvents.length === 0) {
-        setError(data.message);
-        toast.error(data.message);
+        const msg = toUserFacingMessage(data.message);
+        setError(msg);
+        toastError(msg);
         return;
       }
 
@@ -319,9 +335,11 @@ const CallLogs = () => {
       URL.revokeObjectURL(url);
       toast.success(`Downloaded ${allEvents.length} log events`);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to download logs";
+      const msg = toUserFacingMessage(
+        e instanceof Error ? e.message : "Failed to download logs",
+      );
       setError(msg);
-      toast.error(msg);
+      toastError(msg);
     } finally {
       setDownloading(false);
     }

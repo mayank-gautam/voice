@@ -22,6 +22,7 @@ import {
   FileText,
 } from "lucide-react";
 import { toast } from "sonner";
+import { toUserFacingMessage } from "@/lib/userFacingError";
 import { generateTranscript, traceSpans } from "@/lib/mockData";
 import { format } from "date-fns";
 import { apiFetch } from "@/lib/api-client";
@@ -114,7 +115,11 @@ const CallDetails = () => {
         if (!cancelled) {
           if ((e as { code?: string })?.code === "AUTH_REQUIRED") return;
           setCall(null);
-          setCallError(e instanceof Error ? e.message : "Failed to load call from Twilio");
+          setCallError(
+            toUserFacingMessage(
+              e instanceof Error ? e.message : "Failed to load call from Twilio",
+            ),
+          );
         }
       } finally {
         if (!cancelled) setLoadingCall(false);
@@ -165,17 +170,19 @@ const CallDetails = () => {
             }
           } else if (!cancelled) {
             const code = telData?.error?.code as string | undefined;
-            telErr =
+            telErr = toUserFacingMessage(
               telData?.message ||
-              (code === "INSIGHTS_NOT_FOUND" || telRes.status === 404
-                ? "Voice Insights summary is not available for this call yet (or Insights is not enabled)."
-                : telData?.error?.message || "Telephony insights unavailable");
+                (code === "INSIGHTS_NOT_FOUND" || telRes.status === 404
+                  ? "Call quality details are not available for this call yet."
+                  : telData?.error?.message ||
+                    "Call quality details are unavailable."),
+            );
             setTelephony(EMPTY_TELEPHONY);
             setQualityScore(null);
             setTelephonyAvailable(false);
           }
         } catch {
-          telErr = "Telephony insights unavailable";
+          telErr = "Call quality details are unavailable.";
           if (!cancelled) {
             setTelephony(EMPTY_TELEPHONY);
             setQualityScore(null);
@@ -211,16 +218,19 @@ const CallDetails = () => {
             setAudioUrl(objectUrl);
             hasAudio = true;
           } else if (!cancelled) {
-            recErr =
+            recErr = toUserFacingMessage(
               recData?.message ||
-              recData?.error?.message ||
-              "Call recording is not available for this call.";
+                recData?.error?.message ||
+                "A recording is not available for this call.",
+            );
             setAudioUrl(null);
           }
         } catch (e) {
           if (!cancelled) {
             if ((e as { code?: string })?.code === "AUTH_REQUIRED") return;
-            recErr = e instanceof Error ? e.message : "Failed to load call recording";
+            recErr = toUserFacingMessage(
+              e instanceof Error ? e.message : "Failed to load call recording",
+            );
             setAudioUrl(null);
           }
         }
@@ -232,7 +242,11 @@ const CallDetails = () => {
       } catch (e) {
         if (!cancelled) {
           if ((e as { code?: string })?.code === "AUTH_REQUIRED") return;
-          setTelephonyError(e instanceof Error ? e.message : "Failed to load telephony");
+          setTelephonyError(
+            toUserFacingMessage(
+              e instanceof Error ? e.message : "Failed to load telephony",
+            ),
+          );
           setRecordingError(null);
           setTelephony(EMPTY_TELEPHONY);
           setQualityScore(null);

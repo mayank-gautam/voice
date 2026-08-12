@@ -219,7 +219,9 @@ const ServiceMap = () => {
       toast.success(`Trace ${q} found`, { description: `${hit.spans} spans across services` });
     } else {
       setTraceHit(null);
-      toast.error("Trace not found", { description: `Try trace_8a92f1, trace_8a92f0, or trace_8a92ef` });
+      toast.error("Trace not found", {
+        description: "Try another trace ID from the list",
+      });
     }
   };
 

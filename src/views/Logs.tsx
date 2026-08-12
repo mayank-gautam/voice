@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { useProjects } from "@/lib/projectConfig";
-import { toast } from "sonner";
+import { toastError, toUserFacingMessage } from "@/lib/userFacingError";
 import { inferServiceName } from "@/lib/serviceMapFromLogs";
 import { formatProjectNameDisplay } from "@/lib/formatProjectName";
 import {
@@ -248,9 +248,11 @@ function LogsContent() {
         return merged;
       });
 
-      if (result.message && result.configured === false) setError(result.message);
-      else if (result.message && page.length === 0 && !opts.append) setError(result.message);
-      else if (!opts.append) setError(null);
+      if (result.message && result.configured === false) {
+        setError(toUserFacingMessage(result.message));
+      } else if (result.message && page.length === 0 && !opts.append) {
+        setError(toUserFacingMessage(result.message));
+      } else if (!opts.append) setError(null);
     },
     [],
   );
@@ -282,7 +284,7 @@ function LogsContent() {
         if ((e as { name?: string })?.name === "AbortError") return;
         const err = e as Error & { code?: string };
         if (err.code === "AUTH_REQUIRED") {
-          toast.error(err.message);
+          toastError(err.message);
           await redirectToSsoForReauth({ logoutSession: false });
           return;
         }
@@ -290,7 +292,9 @@ function LogsContent() {
         eventsLenRef.current = 0;
         setHasMore(false);
         hasMoreRef.current = false;
-        setError(err.message || "Failed to load logs");
+        setError(
+          toUserFacingMessage(err.message || "Failed to load logs"),
+        );
       } finally {
         if (gen === requestGenRef.current) setLoading(false);
       }
@@ -348,11 +352,13 @@ function LogsContent() {
       if (activeProjectRef.current !== projectIdAtStart) return;
       const err = e as Error & { code?: string };
       if (err.code === "AUTH_REQUIRED") {
-        toast.error(err.message);
+        toastError(err.message);
         await redirectToSsoForReauth({ logoutSession: false });
         return;
       }
-      setLoadMoreError(err.message || "Failed to load more logs");
+      setLoadMoreError(
+        toUserFacingMessage(err.message || "Failed to load more logs"),
+      );
     } finally {
       if (gen === requestGenRef.current) {
         setLoadingMore(false);

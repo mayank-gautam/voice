@@ -36,6 +36,7 @@ import {
   Star,
 } from "lucide-react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/userFacingError";
 
 interface AiNumber {
   id: string;
@@ -122,11 +123,11 @@ const OutboundCalls = () => {
 
   const handleCall = () => {
     if (!isValidE164(toNumber)) {
-      toast.error("Enter a valid number in E.164 format, e.g. +14155550142");
+      toastError("Enter a phone number with country code, for example +14155550142");
       return;
     }
     if (!selectedFrom) {
-      toast.error("Select an AI number to call from");
+      toastError("Select an AI number to call from");
       return;
     }
     setDialing(true);
@@ -154,11 +155,11 @@ const OutboundCalls = () => {
 
   const addNumber = () => {
     if (!newNumber.name.trim()) {
-      toast.error("Give the AI number a name");
+      toastError("Give the AI number a name");
       return;
     }
     if (!isValidE164(newNumber.number)) {
-      toast.error("Number must be E.164 format, e.g. +14155550142");
+      toastError("Enter a phone number with country code, for example +14155550142");
       return;
     }
     const created: AiNumber = {

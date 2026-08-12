@@ -30,6 +30,7 @@ import {
   Link2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { toastError, toUserFacingMessage } from "@/lib/userFacingError";
 import { useProjects } from "@/lib/projectConfig";
 import { apiFetch } from "@/lib/api-client";
 import {
@@ -113,7 +114,7 @@ const TestCall = () => {
     if (projectsLoading) return;
     if (!activeId) {
       setNumbers([]);
-      setNumbersError("No active project");
+      setNumbersError("Select a project to continue.");
       return;
     }
 
@@ -148,7 +149,11 @@ const TestCall = () => {
       });
     } catch (e) {
       setNumbers([]);
-      setNumbersError(e instanceof Error ? e.message : "Failed to list numbers");
+      setNumbersError(
+        toUserFacingMessage(
+          e instanceof Error ? e.message : "Failed to list numbers",
+        ),
+      );
     } finally {
       setNumbersLoading(false);
     }
@@ -256,28 +261,28 @@ const TestCall = () => {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!E164.test(to)) {
-      toast.error(
+      toastError(
         toSelect === CUSTOM_NUMBER
-          ? "Enter a valid E.164 'to' number (e.g. +14155551234)"
-          : "Select a valid 'to' number"
+          ? "Enter a phone number with country code, for example +14155551234"
+          : "Select a valid destination number",
       );
       return;
     }
     if (!E164.test(from)) {
-      toast.error("Select a valid 'from' number");
+      toastError("Select a valid caller number");
       return;
     }
     if (to === from) {
-      toast.error("'to' and 'from' must be different numbers");
+      toastError("The destination and caller numbers must be different");
       return;
     }
     if (instructionMode === "twiml") {
       if (!/<Response[\s>]/i.test(twiml) || !/<\/Response>/i.test(twiml)) {
-        toast.error("TwiML must include a <Response>...</Response> document");
+        toastError("Enter a valid call script, or use a webhook URL instead.");
         return;
       }
     } else if (!isValidWebhookUrl(webhookUrl)) {
-      toast.error("Enter a valid webhook URL (http or https)");
+      toastError("Enter a valid web address starting with http:// or https://");
       return;
     }
 
@@ -313,7 +318,7 @@ const TestCall = () => {
         description: `${call.sid} · ${call.status}`,
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create call");
+      toastError(err instanceof Error ? err.message : "Failed to create call");
     } finally {
       setSubmitting(false);
     }

@@ -47,7 +47,7 @@ export function SsoClient({ initialSession }: SsoClientProps) {
             <p className="max-w-xl text-sm leading-relaxed text-muted-foreground">
               {authenticated
                 ? "Pick an account, role, and project, then use this account to open the app."
-                : "Authenticate with AWS SSO. Your session stays in this browser."}
+                : "Sign in with your organization account. Your session stays in this browser."}
             </p>
           </div>
         </header>
@@ -96,9 +96,9 @@ export function SsoClient({ initialSession }: SsoClientProps) {
 
               <ol className="space-y-3 text-sm text-muted-foreground">
                 {[
-                  "Select an AWS account",
+                  "Select an account",
                   "Choose a role for that account",
-                  "Confirm the mapped project",
+                  "Confirm your project",
                   "Use This Account to open the app",
                 ].map((step, index) => (
                   <li key={step} className="flex items-start gap-2.5">

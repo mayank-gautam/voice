@@ -13,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Check, ChevronsUpDown, FolderKanban, Settings2 } from "lucide-react";
 import { toast } from "sonner";
+import { toastError, toUserFacingMessage } from "@/lib/userFacingError";
 import { formatProjectNameDisplay } from "@/lib/formatProjectName";
 import { useProjects } from "@/lib/projectConfig";
 import { useGlobalLoading } from "@/lib/loading";
@@ -38,7 +39,7 @@ export const ProjectSwitcher = () => {
         variant="outline"
         size="sm"
         className="gap-2 max-w-[240px] text-destructive"
-        title={error}
+        title={toUserFacingMessage(error)}
         disabled
       >
         <FolderKanban className="w-4 h-4" />
@@ -86,7 +87,7 @@ export const ProjectSwitcher = () => {
                 );
                 toast.success(`Switched to ${formatProjectNameDisplay(p.name)}`);
               } catch (e) {
-                toast.error(e instanceof Error ? e.message : "Unable to switch project");
+                toastError(e instanceof Error ? e.message : "Unable to switch project");
               }
             }}
             className="gap-2"

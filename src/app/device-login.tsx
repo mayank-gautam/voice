@@ -29,6 +29,7 @@ import { PROJECTS_CHANGED_EVENT } from "@/lib/projectConfig";
 import { sanitizeReturnTo } from "@/lib/auth-return-to";
 
 import { cn } from "@/lib/utils";
+import { toUserFacingMessage } from "@/lib/userFacingError";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -278,6 +279,10 @@ function isTokenError(status: number, message: string): boolean {
     normalizedMessage.includes("invalid_grant")
   );
 }
+
+/**
+ * User-facing auth errors use shared `toUserFacingMessage` at display sites only.
+ */
 
 /* -------------------------------------------------------------------------- */
 /* Main Component                                                             */
@@ -1376,7 +1381,7 @@ export function DeviceLogin({
             Loading accounts…
           </p>
           <p className="text-sm text-muted-foreground">
-            Fetching the AWS accounts available to this SSO session.
+            Looking up the accounts available to you.
           </p>
         </div>
       </section>
@@ -1395,7 +1400,7 @@ export function DeviceLogin({
             Preparing access…
           </p>
           <p className="text-sm text-muted-foreground">
-            Securing role credentials for the account you selected.
+            Setting up access for the account and role you selected.
           </p>
         </div>
       </section>
@@ -1459,9 +1464,7 @@ export function DeviceLogin({
           role="alert"
           className="w-full rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
         >
-          {/token|secret|credential|accessKey|authToken/i.test(state.message)
-            ? "Something went wrong during sign-in. Please try again."
-            : state.message}
+          {toUserFacingMessage(state.message)}
         </p>
         <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-center">
           <button
@@ -1496,8 +1499,7 @@ export function DeviceLogin({
           Sign in with AWS
         </h2>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Authenticate with AWS IAM Identity Center to choose an account and
-          role.
+          Sign in with your organization account to choose an account and role.
         </p>
       </div>
       {initialSession?.accountId && (
@@ -1683,7 +1685,7 @@ function AccountScopePicker({
 
         if (loaded.length === 0) {
           setError(
-            `No projects found in twilio-mappings for ${account.accountId}:${role.roleName}.`,
+            "No projects are available for this account and role. Try another role or contact your admin.",
           );
         }
       } catch (err) {
@@ -1691,7 +1693,7 @@ function AccountScopePicker({
         setError(
           err instanceof Error
             ? err.message
-            : "Unable to load projects from twilio-mappings.",
+            : "Unable to load projects for this account and role.",
         );
       } finally {
         if (!cancelled) setLoadingProjects(false);
@@ -1720,16 +1722,7 @@ function AccountScopePicker({
   const selectedProject = projects.find((project) => project.id === projectId);
   const noAccounts = accounts.length === 0;
 
-  const safeError = (() => {
-    if (!error) return null;
-    if (/token|secret|credential|authToken|accessKey/i.test(error)) {
-      return "Unable to load account options. Try again or sign out and restart SSO.";
-    }
-    if (/No projects found in twilio-mappings/i.test(error)) {
-      return "No projects are mapped for this account and role. Choose a different role or contact your administrator.";
-    }
-    return error;
-  })();
+  const safeError = error ? toUserFacingMessage(error) : null;
 
   return (
     <section className="glass-card animate-slide-up flex h-full flex-col space-y-5 p-5 sm:p-6">
@@ -1751,8 +1744,8 @@ function AccountScopePicker({
           <Building2 className="h-8 w-8 text-muted-foreground/70" aria-hidden />
           <p className="text-sm font-medium text-foreground">No accounts available</p>
           <p className="max-w-xs text-sm text-muted-foreground">
-            No AWS accounts were returned for this SSO session. Sign out and try
-            again, or contact your administrator.
+            No accounts are available right now. Sign out and try again, or
+            contact your administrator.
           </p>
         </div>
       ) : (
@@ -1873,7 +1866,7 @@ function AccountScopePicker({
                 {loadingProjects ? (
                   <option value="">Loading projects…</option>
                 ) : projects.length === 0 ? (
-                  <option value="">No mapped projects</option>
+                  <option value="">No projects available</option>
                 ) : (
                   projects.map((project) => (
                     <option key={project.id} value={project.id}>
@@ -1887,7 +1880,8 @@ function AccountScopePicker({
               projects.length === 0 &&
               selectedRole ? (
                 <p className="text-xs text-muted-foreground">
-                  No projects are mapped for this account and role.
+                  No projects are available for this account and role. Try
+                  another role or contact your admin.
                 </p>
               ) : null}
             </label>

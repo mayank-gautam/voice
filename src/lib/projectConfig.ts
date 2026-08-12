@@ -6,6 +6,7 @@ import {
   getActiveProjectIdSetting,
   setActiveProjectIdSetting,
 } from "@/lib/credentials-store";
+import { toUserFacingMessage } from "@/lib/userFacingError";
 
 export interface ProjectConfig {
   id: string;
@@ -196,7 +197,11 @@ export const useProjects = () => {
       if ((e as ApiClientError)?.code === "AUTH_REQUIRED") {
         return;
       }
-      setError(e instanceof Error ? e.message : "Failed to load projects");
+      setError(
+        toUserFacingMessage(
+          e instanceof Error ? e.message : "Failed to load projects",
+        ),
+      );
       setProjects([]);
       setActiveId(null);
     } finally {

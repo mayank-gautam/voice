@@ -20,6 +20,7 @@ import {
 } from "recharts";
 import { Play, Square, Gauge, Activity, Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { toUserFacingMessage } from "@/lib/userFacingError";
 import { download } from "@/lib/testSuite";
 import { apiFetch } from "@/lib/api-client";
 import Link from "next/link";
@@ -170,7 +171,10 @@ export function TestCallLoadTesting({ projectId, payload, canStart, onRunningCha
           {
             ok: false,
             latencyMs,
-            error: err instanceof Error ? err.message : "Failed",
+            error: toUserFacingMessage(
+              err instanceof Error ? err.message : "Failed",
+              "Call failed. Please try again.",
+            ),
             at: Date.now(),
           },
           ...prev,
@@ -183,7 +187,7 @@ export function TestCallLoadTesting({ projectId, payload, canStart, onRunningCha
 
   const start = useCallback(() => {
     if (!payloadRef.current || !canStart) {
-      toast.error("Configure valid test call parameters first");
+      toast.error("Check your call settings, then try again");
       return;
     }
 

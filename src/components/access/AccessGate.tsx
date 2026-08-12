@@ -10,6 +10,7 @@ import { getSelectedCredentials } from "@/lib/credentials-store";
 import { getActiveCredentials } from "@/lib/get-active-credentials";
 import { isPublicPath } from "@/lib/auth-return-to";
 import { isReauthInProgress, redirectToSsoForReauth } from "@/lib/reauth";
+import { toUserFacingMessage } from "@/lib/userFacingError";
 
 /**
  * Routes that remain available when the user is authenticated but has zero
@@ -145,7 +146,9 @@ export function AccessGate({ children }: AccessGateProps) {
       <div className="flex min-h-[70vh] items-center justify-center px-4">
         <div className="w-full max-w-md rounded-2xl border border-destructive/30 bg-destructive/5 p-6 text-center">
           <h2 className="text-lg font-semibold text-foreground">Unable to verify access</h2>
-          <p className="mt-2 text-sm text-destructive">{error}</p>
+          <p className="mt-2 text-sm text-destructive">
+            {toUserFacingMessage(error, "We couldn't verify your access. Please try again.")}
+          </p>
           <button
             type="button"
             className="mt-4 text-sm font-medium text-primary hover:underline"

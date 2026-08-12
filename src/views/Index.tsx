@@ -29,7 +29,7 @@ import {
 import { useProjects } from "@/lib/projectConfig";
 import { useTimeRange } from "@/lib/timeRange";
 import { apiFetch } from "@/lib/api-client";
-import { toast } from "sonner";
+import { toastError, toUserFacingMessage } from "@/lib/userFacingError";
 
 type VolumePoint = { time: string; inbound: number; outbound: number };
 type StatusSlice = { name: string; value: number; color: string };
@@ -112,7 +112,7 @@ const OverviewContent = () => {
     try {
       if (!activeId) {
         setSource("empty");
-        setError("No project selected for this AWS account.");
+        setError("Select a project to continue.");
         return;
       }
 
@@ -130,8 +130,9 @@ const OverviewContent = () => {
         if (json?.error?.code === "NO_PROJECT") {
           setSource("empty");
           setError(
-            json?.error?.message ||
-              "No project configured for the selected AWS account/role.",
+            toUserFacingMessage(
+              json?.error?.message || "Select a project to continue.",
+            ),
           );
           return;
         }
@@ -144,9 +145,12 @@ const OverviewContent = () => {
       if ((e as { code?: string })?.code === "AUTH_REQUIRED") return;
       setData(null);
       setSource("empty");
-      const msg = e instanceof Error ? e.message : "Failed to load overview";
+      const msg = toUserFacingMessage(
+        e instanceof Error ? e.message : "Failed to load overview",
+        "Unable to load overview. Please try again.",
+      );
       setError(msg);
-      toast.error(msg);
+      toastError(msg);
     } finally {
       if (requestGen === requestGenRef.current) {
         setLoading(false);

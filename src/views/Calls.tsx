@@ -12,7 +12,7 @@ import { useProjects } from "@/lib/projectConfig";
 import { useTimeRange } from "@/lib/timeRange";
 import type { CallEnvTag } from "@/lib/callEnvTag";
 import { apiFetch } from "@/lib/api-client";
-import { toast } from "sonner";
+import { toastError, toUserFacingMessage } from "@/lib/userFacingError";
 
 type CallRow = {
   id: string;
@@ -107,7 +107,7 @@ const CallsContent = () => {
       try {
         if (!projectId) {
           setSource("empty");
-          setError("No project selected for this AWS account.");
+          setError("Select a project to continue.");
           return;
         }
 
@@ -125,8 +125,9 @@ const CallsContent = () => {
           if (data?.error?.code === "NO_PROJECT") {
             setSource("empty");
             setError(
-              data?.error?.message ||
-                "No project configured for the selected AWS account/role.",
+              toUserFacingMessage(
+                data?.error?.message || "Select a project to continue.",
+              ),
             );
             return;
           }
@@ -137,7 +138,7 @@ const CallsContent = () => {
         setCalls(items);
         setSource("twilio");
         if (data.truncated) {
-          setError("Showing the latest 1,000 calls in this range (Twilio page cap).");
+          setError("Showing the latest 1,000 calls in this date range.");
         }
         void enrichEnvTags(items, projectId, enrichGen);
       } catch (e) {
@@ -145,9 +146,12 @@ const CallsContent = () => {
         if ((e as { code?: string })?.code === "AUTH_REQUIRED") return;
         setCalls([]);
         setSource("empty");
-        const msg = e instanceof Error ? e.message : "Failed to load calls";
+        const msg = toUserFacingMessage(
+          e instanceof Error ? e.message : "Failed to load calls",
+          "Unable to load calls. Please try again.",
+        );
         setError(msg);
-        toast.error(msg);
+        toastError(msg);
       } finally {
         if (requestGen === requestGenRef.current) {
           setLoading(false);

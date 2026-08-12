@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FolderKanban, Check } from "lucide-react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/userFacingError";
 import { useProjects } from "@/lib/projectConfig";
 import { useGlobalLoading } from "@/lib/loading";
 import { formatProjectNameDisplay } from "@/lib/formatProjectName";
@@ -26,9 +27,8 @@ export const ProjectSettingsCard = () => {
             Active project
           </CardTitle>
           <CardDescription>
-            Projects and Twilio credentials come from{" "}
-            <code className="text-[11px]">account-hierarchy.json</code> for your signed-in AWS
-            account. Switching here updates App Settings for the whole app.
+            Choose which project to use for calls, logs, and settings for your
+            current sign-in. Switching here updates the whole app.
           </CardDescription>
         </div>
       </CardHeader>
@@ -78,7 +78,7 @@ export const ProjectSettingsCard = () => {
                       );
                       toast.success(`Switched to ${formatProjectNameDisplay(p.name)}`);
                     } catch (e) {
-                      toast.error(e instanceof Error ? e.message : "Unable to switch project");
+                      toastError(e instanceof Error ? e.message : "Unable to switch project");
                     }
                   }}
                 >
