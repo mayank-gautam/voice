@@ -1,5 +1,4 @@
 import {
-  getDefaultProjectIdForRole,
   getMappedProjectScope,
   listMappedProjectScopes,
   resolveActiveMappedProjectId,
@@ -67,12 +66,14 @@ export async function getStoreMetaForRole(
   accountId: string,
   roleName: string,
   preferredId?: string | null,
-): Promise<{ activeProjectId: string | null; defaultProjectId: string | null }> {
-  const [activeProjectId, defaultProjectId] = await Promise.all([
-    resolveActiveMappedProjectId(accountId, roleName, preferredId),
-    getDefaultProjectIdForRole(accountId, roleName),
-  ]);
-  return { activeProjectId, defaultProjectId };
+): Promise<{ activeProjectId: string | null }> {
+  // preferredId comes from cookie/query (synced from IndexedDB). Never use JSON defaultProject.
+  const activeProjectId = await resolveActiveMappedProjectId(
+    accountId,
+    roleName,
+    preferredId,
+  );
+  return { activeProjectId };
 }
 
 export async function getProjectById(

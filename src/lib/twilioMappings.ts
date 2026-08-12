@@ -1,10 +1,13 @@
 /**
  * twilio-mappings.json shape (ops-managed source of truth):
  *
+ * Active project is NOT chosen from JSON. The user picks a project on SSO
+ * (Choose Project → Use Credentials); that projectId is stored in IndexedDB
+ * AppSettings and reused on later loads / dropdown changes.
+ *
  * {
  *   "mappings": {
  *     "<accountId>:<roleName>": {
- *       "defaultProject": "<projectId>",  // optional
  *       "projects": {
  *         "<projectId>": {
  *           "accountSid": "AC...",
@@ -192,6 +195,11 @@ export function getMappedProject(
   return project;
 }
 
+/**
+ * @deprecated Ignored for active-project selection. Active project comes from
+ * IndexedDB AppSettings (SSO Choose Project / project dropdown).
+ * Returns an optional ops hint from JSON only — never invents a project id.
+ */
 export function getMappedDefaultProjectId(
   file: TwilioMappingsFile,
   accountId: string | null | undefined,
@@ -207,8 +215,7 @@ export function getMappedDefaultProjectId(
     }
   }
 
-  const projects = listMappedProjects(file, accountId, roleName);
-  return projects[0]?.id ?? null;
+  return null;
 }
 
 export function getMappedTenantId(

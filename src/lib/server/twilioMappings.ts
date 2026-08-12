@@ -80,6 +80,7 @@ export async function mappingHasAccountRole(
   return Boolean(getMappingEntry(file, accountId, roleName));
 }
 
+/** @deprecated Not used for active-project selection (IndexedDB AppSettings). */
 export async function getDefaultMappedProjectId(
   accountId: string,
   roleName: string,
@@ -202,6 +203,7 @@ export async function accountRoleHasMappedProjects(
   return mappingHasAccountRole(accountId, roleName);
 }
 
+/** @deprecated Not used for active-project selection (IndexedDB AppSettings). */
 export async function getDefaultProjectIdForRole(
   accountId: string | null | undefined,
   roleName?: string | null,
@@ -210,7 +212,7 @@ export async function getDefaultProjectIdForRole(
   return getDefaultMappedProjectId(accountId, roleName);
 }
 
-/** @deprecated Prefer getDefaultProjectIdForRole */
+/** @deprecated Not used for active-project selection (IndexedDB AppSettings). */
 export async function getDefaultProjectIdFromHierarchy(
   accountId: string | null | undefined,
   roleName?: string | null,
@@ -288,14 +290,11 @@ export async function resolveActiveMappedProjectId(
   const projects = await listMappedProjectScopes(accountId, roleName);
   if (projects.length === 0) return null;
 
+  // Only honor an explicitly preferred id (cookie / query / IndexedDB sync).
+  // Do not fall back to JSON defaultProject.
   const preferred = preferredId?.trim();
   if (preferred && projects.some((project) => project.id === preferred)) {
     return preferred;
-  }
-
-  const defaultId = await getDefaultProjectIdForRole(accountId, roleName);
-  if (defaultId && projects.some((project) => project.id === defaultId)) {
-    return defaultId;
   }
 
   return null;

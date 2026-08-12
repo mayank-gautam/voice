@@ -116,7 +116,6 @@ type AuthState =
       account: AwsAccount;
       role: AwsRole;
       projects: MappedProjectOption[];
-      defaultProjectId: string | null;
     }
   | {
       kind: "creating-credentials";
@@ -1110,7 +1109,6 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
     const data = (await response.json().catch(() => ({}))) as {
       success?: boolean;
       projects?: MappedProjectOption[];
-      defaultProjectId?: string | null;
       error?: { message?: string };
       message?: string;
     };
@@ -1135,7 +1133,6 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
       account,
       role,
       projects,
-      defaultProjectId: data.defaultProjectId ?? null,
     });
   }
 
@@ -1684,7 +1681,6 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         account={state.account}
         role={state.role}
         projects={state.projects}
-        defaultProjectId={state.defaultProjectId}
         isLoggingOut={isLoggingOut}
         onLogout={() => void logout()}
         onBack={() => {
@@ -1937,7 +1933,6 @@ function ProjectPickerSection({
   account,
   role,
   projects,
-  defaultProjectId,
   isLoggingOut,
   onLogout,
   onBack,
@@ -1946,17 +1941,13 @@ function ProjectPickerSection({
   account: AwsAccount;
   role: AwsRole;
   projects: MappedProjectOption[];
-  defaultProjectId: string | null;
   isLoggingOut: boolean;
   onLogout: () => void;
   onBack: () => void;
   onUseCredentials: (projectId: string) => void;
 }) {
-  const initial =
-    (defaultProjectId && projects.some((project) => project.id === defaultProjectId)
-      ? defaultProjectId
-      : projects[0]?.id) || "";
-  const [projectId, setProjectId] = useState(initial);
+  // No JSON defaultProject — user must explicitly choose before Use Credentials.
+  const [projectId, setProjectId] = useState("");
 
   return (
     <section className="animate-slide-up space-y-6">
@@ -2001,6 +1992,9 @@ function ProjectPickerSection({
           value={projectId}
           onChange={(event) => setProjectId(event.target.value)}
         >
+          <option value="" disabled>
+            Select a project…
+          </option>
           {projects.map((project) => (
             <option key={project.id} value={project.id}>
               {project.name}

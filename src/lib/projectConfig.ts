@@ -73,31 +73,21 @@ async function parseJson<T>(res: Response): Promise<T> {
 
 type ProjectsApiResponse = {
   projects: ProjectConfig[];
-  defaultProjectId: string | null;
   activeProjectId: string | null;
 };
 
 /**
- * Resolve active project from IndexedDB AppSettings (source of truth).
- * Falls back to hierarchy defaultProject and persists it when needed.
+ * Resolve active project from IndexedDB AppSettings only.
+ * Never falls back to JSON defaultProject — user must select via SSO or the dropdown.
  */
 async function resolveClientActiveProjectId(
   projects: ProjectConfig[],
-  defaultProjectId: string | null,
 ): Promise<{ activeProjectId: string | null; didChange: boolean }> {
   const validIds = new Set(projects.map((project) => project.id));
   const stored = await getActiveProjectIdSetting().catch(() => null);
 
   if (stored && validIds.has(stored)) {
     return { activeProjectId: stored, didChange: false };
-  }
-
-  const fallback =
-    defaultProjectId && validIds.has(defaultProjectId) ? defaultProjectId : null;
-
-  if (fallback) {
-    await setActiveProjectIdSetting(fallback);
-    return { activeProjectId: fallback, didChange: true };
   }
 
   if (stored) {
@@ -118,13 +108,9 @@ async function syncActiveProjectCookie(projectId: string): Promise<void> {
 export async function fetchProjects(): Promise<{
   projects: ProjectConfig[];
   activeProjectId: string | null;
-  defaultProjectId: string | null;
 }> {
   const data = await parseJson<ProjectsApiResponse>(await apiFetch("/api/projects"));
-  const resolved = await resolveClientActiveProjectId(
-    data.projects,
-    data.defaultProjectId ?? null,
-  );
+  const resolved = await resolveClientActiveProjectId(data.projects);
 
   if (resolved.activeProjectId) {
     // Keep server cookie aligned (SSO re-login clears cookies; IndexedDB may still have projectId).
@@ -134,7 +120,6 @@ export async function fetchProjects(): Promise<{
   return {
     projects: data.projects,
     activeProjectId: resolved.activeProjectId,
-    defaultProjectId: data.defaultProjectId ?? null,
   };
 }
 

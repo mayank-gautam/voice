@@ -20,10 +20,8 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     projects,
-    /** Configured default from account-hierarchy.json (not a hardcoded id). */
-    defaultProjectId: meta.defaultProjectId,
     /**
-     * Server-resolved hint (cookie/query → else hierarchy default).
+     * Server-resolved hint from cookie/query only (never JSON defaultProject).
      * Clients should prefer IndexedDB AppSettings over this value.
      */
     activeProjectId: meta.activeProjectId,
@@ -40,7 +38,7 @@ export async function POST() {
   if (!isAuthOk(auth)) return auth.response;
 
   return apiError(
-    "Projects are managed in account-hierarchy.json. They cannot be created from the app.",
+    "Projects are managed in twilio-mappings.json. They cannot be created from the app.",
     403,
     "HIERARCHY_READONLY",
   );
