@@ -531,10 +531,7 @@ export function DeviceLogin({
     async (
       account: AwsAccount,
       role: AwsRole,
-    ): Promise<{
-      projects: MappedProjectOption[];
-      defaultProjectId: string | null;
-    }> => {
+    ): Promise<MappedProjectOption[]> => {
       const response = await fetch("/api/mappings/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -548,7 +545,6 @@ export function DeviceLogin({
       const data = (await response.json().catch(() => ({}))) as {
         success?: boolean;
         projects?: MappedProjectOption[];
-        defaultProjectId?: string | null;
         error?: { message?: string };
         message?: string;
       };
@@ -561,13 +557,7 @@ export function DeviceLogin({
         );
       }
 
-      return {
-        projects: data.projects || [],
-        defaultProjectId:
-          typeof data.defaultProjectId === "string"
-            ? data.defaultProjectId.trim() || null
-            : null,
-      };
+      return data.projects || [];
     },
     [],
   );
@@ -1529,10 +1519,7 @@ function AccountScopePicker({
   loadProjects: (
     account: AwsAccount,
     role: AwsRole,
-  ) => Promise<{
-    projects: MappedProjectOption[];
-    defaultProjectId: string | null;
-  }>;
+  ) => Promise<MappedProjectOption[]>;
   onUseThisAccount: (
     account: AwsAccount,
     role: AwsRole,
@@ -1545,7 +1532,6 @@ function AccountScopePicker({
   const [projectId, setProjectId] = useState("");
   const [roles, setRoles] = useState<AwsRole[]>([]);
   const [projects, setProjects] = useState<MappedProjectOption[]>([]);
-  const [defaultProjectId, setDefaultProjectId] = useState<string | null>(null);
   const [loadingRoles, setLoadingRoles] = useState(false);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1570,7 +1556,6 @@ function AccountScopePicker({
         setRoleName("");
         setProjects([]);
         setProjectId("");
-        setDefaultProjectId(null);
         return;
       }
 
@@ -1580,7 +1565,6 @@ function AccountScopePicker({
       setRoleName("");
       setProjects([]);
       setProjectId("");
-      setDefaultProjectId(null);
 
       try {
         const token = await resolveAccessToken();
@@ -1627,7 +1611,6 @@ function AccountScopePicker({
       if (!account || !role) {
         setProjects([]);
         setProjectId("");
-        setDefaultProjectId(null);
         return;
       }
 
@@ -1635,17 +1618,17 @@ function AccountScopePicker({
       setError(null);
       setProjects([]);
       setProjectId("");
-      setDefaultProjectId(null);
 
       try {
-        // mappings["accountId:roleName"].projects → e.g. BCS, LFS
+        // mappings["accountId:roleName"].projects — first listed project is preselected.
+        // Do not use JSON defaultProject.
         const loaded = await loadProjects(account, role);
         if (cancelled) return;
 
-        setProjects(loaded.projects);
-        setDefaultProjectId(loaded.defaultProjectId);
+        setProjects(loaded);
+        setProjectId(loaded[0]?.id || "");
 
-        if (loaded.projects.length === 0) {
+        if (loaded.length === 0) {
           setError(
             `No projects found in twilio-mappings for ${account.accountId}:${role.roleName}.`,
           );
@@ -1668,13 +1651,13 @@ function AccountScopePicker({
     };
   }, [accountId, roleName, accounts, roles, loadProjects]);
 
-  const openProject = (nextProjectId: string) => {
-    if (!selectedAccount || !selectedRole || !nextProjectId.trim() || pending) {
+  const continueToApp = () => {
+    if (!selectedAccount || !selectedRole || !projectId.trim() || pending) {
       return;
     }
     setPending(true);
     setError(null);
-    onUseThisAccount(selectedAccount, selectedRole, nextProjectId.trim());
+    onUseThisAccount(selectedAccount, selectedRole, projectId.trim());
   };
 
   const busy = loadingRoles || loadingProjects || pending;
@@ -1694,7 +1677,7 @@ function AccountScopePicker({
             <span className="font-mono text-xs">
               twilio-mappings → accountId:roleName
             </span>
-            . Selecting a project opens it.
+            . The first project is selected; continue opens the home page.
           </p>
         </div>
         <SignOutButton loading={isLoggingOut} onClick={onLogout} />
@@ -1753,11 +1736,7 @@ function AccountScopePicker({
         <select
           className={selectClass}
           value={projectId}
-          onChange={(event) => {
-            const next = event.target.value;
-            setProjectId(next);
-            if (next) openProject(next);
-          }}
+          onChange={(event) => setProjectId(event.target.value)}
           disabled={busy || projects.length === 0}
         >
           {loadingProjects ? (
@@ -1765,18 +1744,12 @@ function AccountScopePicker({
           ) : projects.length === 0 ? (
             <option value="">No mapped projects</option>
           ) : (
-            <>
-              <option value="" disabled>
-                Select a project to open…
+            projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+                {project.hasTwilio ? "" : " (no Twilio)"}
               </option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                  {defaultProjectId === project.id ? " (default)" : ""}
-                  {project.hasTwilio ? "" : " (no Twilio)"}
-                </option>
-              ))}
-            </>
+            ))
           )}
         </select>
       </label>
@@ -1787,11 +1760,16 @@ function AccountScopePicker({
         </p>
       )}
 
-      {pending && (
-        <p className="text-sm text-muted-foreground animate-pulse-glow">
-          Opening project…
-        </p>
-      )}
+      <button
+        type="button"
+        className={cn(primaryButtonClass, "w-full sm:w-auto")}
+        disabled={
+          busy || !selectedAccount || !selectedRole || !projectId.trim()
+        }
+        onClick={continueToApp}
+      >
+        {pending ? "Opening…" : "Continue"}
+      </button>
     </section>
   );
 }
