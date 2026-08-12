@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import { useRouter } from "next/navigation";
+import { Building2, FolderKanban, KeyRound, Loader2 } from "lucide-react";
 
 import {
   areAwsCredentialsExpired,
@@ -216,13 +217,13 @@ type SessionApiResponse = {
 /* -------------------------------------------------------------------------- */
 
 const primaryButtonClass =
-  "inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--glow-primary)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--glow-primary)] transition-all duration-200 hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none";
 
 const secondaryButtonClass =
-  "inline-flex items-center justify-center rounded-lg border border-border bg-transparent px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-transparent px-4 py-2 text-sm font-medium text-foreground transition-colors duration-200 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50";
 
 const selectClass =
-  "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm";
+  "w-full rounded-lg border border-border/80 bg-background px-3 py-2.5 text-sm text-foreground shadow-sm transition-colors duration-200 hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50";
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -1326,9 +1327,15 @@ export function DeviceLogin({
 
   if (state.kind === "checking-session") {
     return (
-      <p className="text-center text-sm text-muted-foreground animate-pulse-glow">
-        Restoring your session…
-      </p>
+      <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 text-center">
+        <Loader2
+          className="h-6 w-6 animate-spin text-primary"
+          aria-hidden
+        />
+        <p className="text-sm text-muted-foreground animate-pulse-glow">
+          Restoring your session…
+        </p>
+      </div>
     );
   }
 
@@ -1359,17 +1366,39 @@ export function DeviceLogin({
 
   if (state.kind === "loading-accounts") {
     return (
-      <p className="text-sm text-muted-foreground animate-pulse-glow">
-        Loading accounts…
-      </p>
+      <section className="glass-card animate-slide-up flex min-h-[16rem] flex-col items-center justify-center gap-3 p-8 text-center">
+        <Loader2
+          className="h-7 w-7 animate-spin text-primary"
+          aria-hidden
+        />
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-foreground">
+            Loading accounts…
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Fetching the AWS accounts available to this SSO session.
+          </p>
+        </div>
+      </section>
     );
   }
 
   if (state.kind === "creating-credentials") {
     return (
-      <p className="text-sm text-muted-foreground animate-pulse-glow">
-        Fetching credentials…
-      </p>
+      <section className="glass-card animate-slide-up flex min-h-[16rem] flex-col items-center justify-center gap-3 p-8 text-center">
+        <Loader2
+          className="h-7 w-7 animate-spin text-primary"
+          aria-hidden
+        />
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-foreground">
+            Preparing access…
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Securing role credentials for the account you selected.
+          </p>
+        </div>
+      </section>
     );
   }
 
@@ -1379,19 +1408,21 @@ export function DeviceLogin({
 
   if (state.kind === "waiting") {
     return (
-      <section className="glass-card animate-slide-up space-y-5 p-6 text-center">
-        <h2 className="text-lg font-semibold text-foreground">
-          Approve this login
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Enter this code in the AWS SSO page (opened in a new tab):
-        </p>
-        <p className="mono text-3xl font-semibold tracking-[0.2em] text-primary">
+      <section className="glass-card animate-slide-up space-y-6 p-6 text-center sm:p-8">
+        <div className="space-y-2">
+          <h2 className="text-lg font-semibold tracking-tight text-foreground">
+            Approve this login
+          </h2>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            Enter this code on the AWS SSO page (opened in a new tab):
+          </p>
+        </div>
+        <p className="mono rounded-xl border border-primary/20 bg-primary/5 px-4 py-4 text-3xl font-semibold tracking-[0.2em] text-primary">
           {state.userCode}
         </p>
         {state.verificationUriComplete && (
           <a
-            className={cn(primaryButtonClass, "inline-flex")}
+            className={cn(primaryButtonClass, "inline-flex w-full sm:w-auto")}
             href={state.verificationUriComplete}
             target="_blank"
             rel="noopener noreferrer"
@@ -1401,7 +1432,7 @@ export function DeviceLogin({
         )}
         {!state.verificationUriComplete && state.verificationUri && (
           <a
-            className={cn(primaryButtonClass, "inline-flex")}
+            className={cn(primaryButtonClass, "inline-flex w-full sm:w-auto")}
             href={state.verificationUri}
             target="_blank"
             rel="noopener noreferrer"
@@ -1409,7 +1440,8 @@ export function DeviceLogin({
             Open AWS SSO
           </a>
         )}
-        <p className="animate-pulse-glow text-sm text-muted-foreground">
+        <p className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden />
           Waiting for approval…
         </p>
       </section>
@@ -1422,9 +1454,14 @@ export function DeviceLogin({
 
   if (state.kind === "error") {
     return (
-      <div className="flex flex-col items-center gap-4">
-        <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-          {state.message}
+      <section className="glass-card animate-slide-up flex w-full max-w-md flex-col items-center gap-5 p-6 text-center sm:p-8">
+        <p
+          role="alert"
+          className="w-full rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          {/token|secret|credential|accessKey|authToken/i.test(state.message)
+            ? "Something went wrong during sign-in. Please try again."
+            : state.message}
         </p>
         <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-center">
           <button
@@ -1444,7 +1481,7 @@ export function DeviceLogin({
             {isStartingLogin ? "Starting…" : "Try again"}
           </button>
         </div>
-      </div>
+      </section>
     );
   }
 
@@ -1453,10 +1490,19 @@ export function DeviceLogin({
   /* ------------------------------------------------------------------------ */
 
   return (
-    <div className="flex flex-col items-center gap-4">
+    <section className="glass-card animate-slide-up flex w-full max-w-md flex-col items-center gap-5 p-6 text-center sm:p-8">
+      <div className="space-y-2">
+        <h2 className="text-lg font-semibold tracking-tight text-foreground">
+          Sign in with AWS
+        </h2>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Authenticate with AWS IAM Identity Center to choose an account and
+          role.
+        </p>
+      </div>
       {initialSession?.accountId && (
-        <p className="text-center text-xs text-muted-foreground">
-          Previous account:{" "}
+        <p className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          Last session account{" "}
           <span className="font-mono text-foreground">
             {initialSession.accountId}
           </span>
@@ -1464,13 +1510,20 @@ export function DeviceLogin({
       )}
       <button
         type="button"
-        className={cn(primaryButtonClass, "w-full sm:w-auto")}
+        className={cn(primaryButtonClass, "w-full")}
         onClick={() => void startLogin()}
         disabled={isStartingLogin}
       >
-        {isStartingLogin ? "Starting…" : "Sign in with AWS SSO"}
+        {isStartingLogin ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            Starting…
+          </>
+        ) : (
+          "Sign in with AWS SSO"
+        )}
       </button>
-    </div>
+    </section>
   );
 }
 
@@ -1488,7 +1541,7 @@ function SignOutButton({
   return (
     <button
       type="button"
-      className="inline-flex items-center justify-center rounded-lg border border-border bg-transparent px-5 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+      className="inline-flex shrink-0 items-center justify-center rounded-lg border border-border bg-transparent px-3 py-2 text-sm font-medium text-foreground transition-colors duration-200 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 sm:px-4"
       disabled={loading}
       onClick={onClick}
     >
@@ -1661,117 +1714,209 @@ function AccountScopePicker({
   };
 
   const busy = loadingRoles || loadingProjects || pending;
+  const canContinue = Boolean(
+    selectedAccount && selectedRole && projectId.trim() && !busy,
+  );
+  const selectedProject = projects.find((project) => project.id === projectId);
+  const noAccounts = accounts.length === 0;
+
+  const safeError = (() => {
+    if (!error) return null;
+    if (/token|secret|credential|authToken|accessKey/i.test(error)) {
+      return "Unable to load account options. Try again or sign out and restart SSO.";
+    }
+    if (/No projects found in twilio-mappings/i.test(error)) {
+      return "No projects are mapped for this account and role. Choose a different role or contact your administrator.";
+    }
+    return error;
+  })();
 
   return (
-    <section className="glass-card animate-slide-up flex h-full flex-col space-y-4 p-6">
+    <section className="glass-card animate-slide-up flex h-full flex-col space-y-5 p-5 sm:p-6">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">
+        <div className="min-w-0 space-y-1">
+          <h2 className="text-lg font-semibold tracking-tight text-foreground">
             Choose AWS account & role
           </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Session is stored in IndexedDB. Switch accounts without a new device
-            code.
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            Select where to work, then continue into the app. Your SSO session
+            stays in this browser.
           </p>
         </div>
         <SignOutButton loading={isLoggingOut} onClick={onLogout} />
       </div>
 
-      {(loadingRoles && roles.length === 0 && !accountId) ? (
-        <p className="text-sm text-muted-foreground animate-pulse-glow">
-          Loading accounts…
-        </p>
+      {noAccounts ? (
+        <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-10 text-center">
+          <Building2 className="h-8 w-8 text-muted-foreground/70" aria-hidden />
+          <p className="text-sm font-medium text-foreground">No accounts available</p>
+          <p className="max-w-xs text-sm text-muted-foreground">
+            No AWS accounts were returned for this SSO session. Sign out and try
+            again, or contact your administrator.
+          </p>
+        </div>
       ) : (
-        <div className="space-y-4">
-          <label className="block space-y-1.5">
-            <span className="text-xs uppercase tracking-wider text-muted-foreground">
-              Account
-            </span>
-            <select
-              className={selectClass}
-              value={accountId}
-              onChange={(event) => setAccountId(event.target.value)}
-              disabled={busy || accounts.length === 0}
-            >
-              {accounts.length === 0 && (
-                <option value="">No accounts found</option>
-              )}
-              {accounts.map((account) => (
-                <option key={account.accountId} value={account.accountId}>
-                  {(account.accountName || "Account") +
-                    ` (${account.accountId})`}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="space-y-5">
+          <div
+            className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3"
+            aria-live="polite"
+          >
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-primary">
+              Current selection
+            </p>
+            <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-3">
+              <div className="min-w-0">
+                <dt className="text-xs text-muted-foreground">Account</dt>
+                <dd className="mt-0.5 truncate font-medium text-foreground">
+                  {selectedAccount
+                    ? selectedAccount.accountName || selectedAccount.accountId
+                    : "—"}
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-xs text-muted-foreground">Role</dt>
+                <dd className="mt-0.5 truncate font-medium text-foreground">
+                  {loadingRoles ? "Loading…" : selectedRole?.roleName || "—"}
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-xs text-muted-foreground">Project</dt>
+                <dd className="mt-0.5 truncate font-medium text-foreground">
+                  {loadingProjects
+                    ? "Loading…"
+                    : selectedProject?.name || projectId || "—"}
+                </dd>
+              </div>
+            </dl>
+          </div>
 
-          <label className="block space-y-1.5">
-            <span className="text-xs uppercase tracking-wider text-muted-foreground">
-              Role
-            </span>
-            <select
-              className={selectClass}
-              value={roleName}
-              onChange={(event) => setRoleName(event.target.value)}
-              disabled={busy || roles.length === 0}
-            >
-              {loadingRoles ? (
-                <option value="">Loading roles…</option>
-              ) : roles.length === 0 ? (
-                <option value="">No roles in this account</option>
-              ) : (
-                roles.map((role) => (
-                  <option
-                    key={`${role.accountId}:${role.roleName}`}
-                    value={role.roleName}
-                  >
-                    {role.roleName}
+          <div className="space-y-4">
+            <label className="block space-y-1.5">
+              <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <Building2 className="h-3.5 w-3.5" aria-hidden />
+                Account
+              </span>
+              <select
+                className={selectClass}
+                value={accountId}
+                onChange={(event) => setAccountId(event.target.value)}
+                disabled={busy || accounts.length === 0}
+                aria-busy={busy}
+              >
+                {accounts.map((account) => (
+                  <option key={account.accountId} value={account.accountId}>
+                    {(account.accountName || "Account") +
+                      ` (${account.accountId})`}
                   </option>
-                ))
-              )}
-            </select>
-          </label>
+                ))}
+              </select>
+            </label>
 
-          <label className="block space-y-1.5">
-            <span className="text-xs uppercase tracking-wider text-muted-foreground">
-              Project
-            </span>
-            <select
-              className={selectClass}
-              value={projectId}
-              onChange={(event) => setProjectId(event.target.value)}
-              disabled={busy || projects.length === 0}
+            <label className="block space-y-1.5">
+              <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <KeyRound className="h-3.5 w-3.5" aria-hidden />
+                Role
+                {loadingRoles && (
+                  <Loader2
+                    className="h-3.5 w-3.5 animate-spin text-primary"
+                    aria-label="Loading roles"
+                  />
+                )}
+              </span>
+              <select
+                className={selectClass}
+                value={roleName}
+                onChange={(event) => setRoleName(event.target.value)}
+                disabled={busy || loadingRoles || roles.length === 0}
+                aria-busy={loadingRoles}
+              >
+                {loadingRoles ? (
+                  <option value="">Loading roles…</option>
+                ) : roles.length === 0 ? (
+                  <option value="">No roles in this account</option>
+                ) : (
+                  roles.map((role) => (
+                    <option
+                      key={`${role.accountId}:${role.roleName}`}
+                      value={role.roleName}
+                    >
+                      {role.roleName}
+                    </option>
+                  ))
+                )}
+              </select>
+              {!loadingRoles && roles.length === 0 && accountId ? (
+                <p className="text-xs text-muted-foreground">
+                  No roles are available for this account.
+                </p>
+              ) : null}
+            </label>
+
+            <label className="block space-y-1.5">
+              <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <FolderKanban className="h-3.5 w-3.5" aria-hidden />
+                Project
+                {loadingProjects && (
+                  <Loader2
+                    className="h-3.5 w-3.5 animate-spin text-primary"
+                    aria-label="Loading projects"
+                  />
+                )}
+              </span>
+              <select
+                className={selectClass}
+                value={projectId}
+                onChange={(event) => setProjectId(event.target.value)}
+                disabled={busy || loadingProjects || projects.length === 0}
+                aria-busy={loadingProjects}
+              >
+                {loadingProjects ? (
+                  <option value="">Loading projects…</option>
+                ) : projects.length === 0 ? (
+                  <option value="">No mapped projects</option>
+                ) : (
+                  projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                      {project.hasTwilio ? "" : " (no Twilio)"}
+                    </option>
+                  ))
+                )}
+              </select>
+              {!loadingProjects &&
+              projects.length === 0 &&
+              selectedRole ? (
+                <p className="text-xs text-muted-foreground">
+                  No projects are mapped for this account and role.
+                </p>
+              ) : null}
+            </label>
+          </div>
+
+          {safeError && (
+            <p
+              role="alert"
+              className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
             >
-              {loadingProjects ? (
-                <option value="">Loading projects…</option>
-              ) : projects.length === 0 ? (
-                <option value="">No mapped projects</option>
-              ) : (
-                projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                    {project.hasTwilio ? "" : " (no Twilio)"}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
-
-          {error && (
-            <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
+              {safeError}
             </p>
           )}
 
           <button
             type="button"
-            className={cn(primaryButtonClass, "w-full sm:w-auto")}
-            disabled={
-              busy || !selectedAccount || !selectedRole || !projectId.trim()
-            }
+            className={cn(primaryButtonClass, "w-full")}
+            disabled={!canContinue}
             onClick={continueToApp}
+            aria-disabled={!canContinue}
           >
-            {pending ? "Opening…" : "Continue"}
+            {pending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Opening…
+              </>
+            ) : (
+              "Use This Account"
+            )}
           </button>
         </div>
       )}
