@@ -119,19 +119,20 @@ export default async function SsoPage() {
                 </div>
 
                 <h2 className="text-3xl font-bold tracking-tight text-foreground">
-                  Authenticate
+                  Account access
                 </h2>
 
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Sign in with AWS, then choose your account and role
+                  Sign in with AWS, then choose an account and role before
+                  opening the app
                 </p>
               </div>
 
               {/*
-               * DeviceLogin:
-               * 1. Sign in with AWS (reuse SSO token when valid)
-               * 2. Account & Role Selection → Use This Account
-               * 3. Switch Account returns here without re-approval when token is valid
+               * Separate from the main application UI:
+               * 1. Sign in with AWS (reuse token when valid)
+               * 2. Account & Role Selection → Use This Account → app
+               * 3. Switch Account returns here without re-approval when possible
                */}
               <DeviceLogin initialSession={initialSession} />
             </div>
