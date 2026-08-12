@@ -1,10 +1,10 @@
 import {
-  getDefaultProjectIdFromHierarchy,
-  getHierarchyProject,
-  listHierarchyProjectsForAccount,
-  resolveActiveHierarchyProjectId,
-} from "@/lib/server/accountHierarchy";
-import type { HierarchyProjectPublic } from "@/lib/accountHierarchy";
+  getDefaultProjectIdForRole,
+  getMappedProjectScope,
+  listMappedProjectScopes,
+  resolveActiveMappedProjectId,
+} from "@/lib/server/twilioMappings";
+import type { MappedProjectScope } from "@/lib/twilioMappings";
 
 export interface ProjectConfig {
   id: string;
@@ -14,7 +14,7 @@ export interface ProjectConfig {
   awsAccountId: string;
   /** IAM Identity Center role from the current SSO session. */
   awsRoleName: string;
-  /** True when Twilio SID+token exist in account-hierarchy for this project. */
+  /** True when Twilio SID+token exist in twilio-mappings for this project. */
   hasTwilio?: boolean;
   aws: {
     region: string;
@@ -27,7 +27,7 @@ export interface ProjectConfig {
 
 export type ProjectPublic = ProjectConfig;
 
-function fromHierarchy(project: HierarchyProjectPublic): ProjectConfig {
+function fromMappedScope(project: MappedProjectScope): ProjectConfig {
   return {
     id: project.id,
     name: project.name,
@@ -46,7 +46,7 @@ export function projectMatchesRole(
   accountId: string,
   _roleName: string,
 ): boolean {
-  // Hierarchy is account-scoped (no role level in the file). Role is session context only.
+  // Mapped projects are account+role scoped in twilio-mappings.json.
   const normalizedAccountId = accountId.trim();
   return Boolean(project.awsAccountId) && project.awsAccountId === normalizedAccountId;
 }
@@ -59,8 +59,8 @@ export async function listProjectsForRole(
   accountId: string,
   roleName: string,
 ): Promise<ProjectPublic[]> {
-  const projects = await listHierarchyProjectsForAccount(accountId, roleName);
-  return projects.map(fromHierarchy);
+  const projects = await listMappedProjectScopes(accountId, roleName);
+  return projects.map(fromMappedScope);
 }
 
 export async function getStoreMetaForRole(
@@ -69,8 +69,8 @@ export async function getStoreMetaForRole(
   preferredId?: string | null,
 ): Promise<{ activeProjectId: string | null; defaultProjectId: string | null }> {
   const [activeProjectId, defaultProjectId] = await Promise.all([
-    resolveActiveHierarchyProjectId(accountId, roleName, preferredId),
-    getDefaultProjectIdFromHierarchy(accountId),
+    resolveActiveMappedProjectId(accountId, roleName, preferredId),
+    getDefaultProjectIdForRole(accountId, roleName),
   ]);
   return { activeProjectId, defaultProjectId };
 }
@@ -80,8 +80,8 @@ export async function getProjectById(
   scope?: { accountId: string; roleName: string },
 ): Promise<ProjectConfig | null> {
   if (!scope) return null;
-  const project = await getHierarchyProject(scope.accountId, scope.roleName, id);
-  return project ? fromHierarchy(project) : null;
+  const project = await getMappedProjectScope(scope.accountId, scope.roleName, id);
+  return project ? fromMappedScope(project) : null;
 }
 
 export async function getDecryptedActiveProject(
@@ -90,15 +90,15 @@ export async function getDecryptedActiveProject(
 ): Promise<ProjectConfig | null> {
   if (!scope) return null;
 
-  const activeId = await resolveActiveHierarchyProjectId(
+  const activeId = await resolveActiveMappedProjectId(
     scope.accountId,
     scope.roleName,
     projectId,
   );
   if (!activeId) return null;
 
-  const project = await getHierarchyProject(scope.accountId, scope.roleName, activeId);
-  return project ? fromHierarchy(project) : null;
+  const project = await getMappedProjectScope(scope.accountId, scope.roleName, activeId);
+  return project ? fromMappedScope(project) : null;
 }
 
 export async function setActiveProjectId(id: string): Promise<boolean> {
@@ -108,7 +108,7 @@ export async function setActiveProjectId(id: string): Promise<boolean> {
   return Boolean(trimmed);
 }
 
-/** Manual create/update/delete disabled — account-hierarchy.json is the source of truth. */
+/** Manual create/update/delete disabled — twilio-mappings.json is the source of truth. */
 export async function createProject(
   _input: Omit<ProjectConfig, "createdAt" | "updatedAt"> & {
     createdAt?: string;
@@ -116,7 +116,7 @@ export async function createProject(
   },
 ): Promise<ProjectPublic> {
   throw new Error(
-    "Projects are defined in account-hierarchy.json and cannot be created from the UI.",
+    "Projects are defined in twilio-mappings.json and cannot be created from the UI.",
   );
 }
 
@@ -125,12 +125,12 @@ export async function updateProject(
   _patch: Partial<ProjectConfig>,
 ): Promise<ProjectPublic | null> {
   throw new Error(
-    "Projects are defined in account-hierarchy.json and cannot be edited from the UI.",
+    "Projects are defined in twilio-mappings.json and cannot be edited from the UI.",
   );
 }
 
 export async function deleteProject(_id: string): Promise<boolean> {
   throw new Error(
-    "Projects are defined in account-hierarchy.json and cannot be deleted from the UI.",
+    "Projects are defined in twilio-mappings.json and cannot be deleted from the UI.",
   );
 }

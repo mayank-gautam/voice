@@ -6,7 +6,7 @@ import {
 } from "@aws-sdk/client-cloudwatch-logs";
 import type { ProjectConfig } from "./projectStore";
 import type { AwsCredentialHeaders } from "./api";
-import { getTenantIdFromHierarchy } from "@/lib/server/accountHierarchy";
+import { getTenantIdForMappedProject } from "@/lib/server/twilioMappings";
 import {
   DEFAULT_CLOUDWATCH_INSIGHTS_FILTER,
   resolveCloudWatchInsightsFilter,
@@ -100,13 +100,17 @@ async function mapPool<T, R>(
 }
 
 /**
- * Resolve tenantId for CloudWatch filtering from account-hierarchy.json
- * using the project's AWS account + project id (no hardcoded map).
+ * Resolve tenantId for CloudWatch filtering from twilio-mappings.json
+ * using the project's AWS account + role + project id (no hardcoded map).
  */
 export async function resolveTenantIdForProject(
   project: ProjectConfig,
 ): Promise<string | null> {
-  return getTenantIdFromHierarchy(project.awsAccountId, project.id);
+  return getTenantIdForMappedProject(
+    project.awsAccountId,
+    project.id,
+    project.awsRoleName,
+  );
 }
 
 /** Derive a service label from a log group path (Fastify getServiceValue). */

@@ -1,5 +1,6 @@
 import twilio from "twilio";
 import type { TwilioEnvConfig } from "./twilioEnv";
+import { resolveTwilioRegionEdge } from "@/lib/twilioRegions";
 import {
   inferEnvTagFromTexts,
   type CallEnvTag,
@@ -7,14 +8,13 @@ import {
 
 export type { CallEnvTag };
 
+/**
+ * Create a Twilio REST client using account credentials plus mapping region/edge.
+ * Always passes region + edge from twilio-mappings (resolved with defaults).
+ */
 export function getTwilioClientFromConfig(config: TwilioEnvConfig) {
-  // us1 works best against the default api.twilio.com host. Forcing edge/region
-  // can break media/Insights adjacent REST calls for many accounts.
-  const region = config.region?.trim();
-  const edge = config.edge?.trim();
-  const useRegional = Boolean(region && region !== "us1");
-
-  return twilio(config.accountSid, config.authToken, useRegional ? { region, edge } : undefined);
+  const { region, edge } = resolveTwilioRegionEdge(config.region, config.edge);
+  return twilio(config.accountSid, config.authToken, { region, edge });
 }
 
 export type CallListItem = {
@@ -202,14 +202,10 @@ export function mapInsightsToTelephony(summary: any): { telephony: TelephonyPayl
   return { telephony, qualityScore: score };
 }
 
-/** Twilio REST API host for media downloads (recordings). */
+/** Twilio REST API host for media downloads (recordings), using mapping region/edge. */
 export function twilioRestApiBase(config: TwilioEnvConfig): string {
-  const region = config.region?.trim();
-  const edge = config.edge?.trim();
-  if (region && region !== "us1" && edge) {
-    return `https://api.${edge}.${region}.twilio.com`;
-  }
-  return "https://api.twilio.com";
+  const { region, edge } = resolveTwilioRegionEdge(config.region, config.edge);
+  return `https://api.${edge}.${region}.twilio.com`;
 }
 
 /**
@@ -223,7 +219,8 @@ export async function fetchVoiceInsightsSummary(
 ): Promise<any> {
   const auth = Buffer.from(`${twilioConfig.accountSid}:${twilioConfig.authToken}`).toString("base64");
   const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
-  const base = `https://insights.twilio.com/v1/Voice/${encodeURIComponent(callSid)}/Summary`;
+  const { region, edge } = resolveTwilioRegionEdge(twilioConfig.region, twilioConfig.edge);
+  const base = `https://insights.${edge}.${region}.twilio.com/v1/Voice/${encodeURIComponent(callSid)}/Summary`;
   const urls = [
     `${base}?ProcessingState=complete`,
     `${base}?ProcessingState=partial`,

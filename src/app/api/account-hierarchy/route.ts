@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireAuth, isAuthOk, apiError } from "@/lib/server/api";
-import { listHierarchyProjectsForAccount } from "@/lib/server/accountHierarchy";
+import { listMappedProjectScopes } from "@/lib/server/twilioMappings";
 
 /**
- * Public (non-secret) view of account-hierarchy for the authenticated AWS account.
+ * Public (non-secret) view of twilio-mappings projects for the authenticated AWS account/role.
  * Never returns Twilio auth tokens.
  */
 export async function GET() {
@@ -11,7 +11,7 @@ export async function GET() {
   if (!isAuthOk(auth)) return auth.response;
 
   try {
-    const projects = await listHierarchyProjectsForAccount(
+    const projects = await listMappedProjectScopes(
       auth.accountId,
       auth.roleName,
     );

@@ -2,9 +2,9 @@ import "server-only";
 
 import { resolveTwilioRegionEdge } from "@/lib/twilioRegions";
 import {
-  getTwilioConfigFromHierarchy,
-  requireTwilioConfigFromHierarchy,
-} from "@/lib/server/accountHierarchy";
+  getTwilioConfigForMappedProject,
+  requireTwilioConfigForMappedProject,
+} from "@/lib/server/twilioMappings";
 
 export type TwilioEnvConfig = {
   accountSid: string;
@@ -19,7 +19,7 @@ export type TwilioEnvConfig = {
  *   TWILIO_ACCOUNT_SID_4728472847874=ACxxxx
  *   TWILIO_AUTH_TOKEN_4728472847874=xxxx
  *
- * Prefer account-hierarchy.json (account → project → twilio) when a projectId
+ * Prefer twilio-mappings.json (account → role → project → twilio) when a projectId
  * is provided. Env remains a fallback for account-only lookups.
  */
 function envKey(field: string, accountId: string): string {
@@ -74,7 +74,7 @@ export function requireTwilioConfigForAwsAccount(accountId: string): TwilioEnvCo
 
   if (!config) {
     throw new Error(
-      `Twilio is not configured for AWS account ${accountId}. Add credentials to account-hierarchy.json or set ${envKey("ACCOUNT_SID", accountId)} / ${envKey("AUTH_TOKEN", accountId)}.`,
+      `Twilio is not configured for AWS account ${accountId}. Add credentials to twilio-mappings.json or set ${envKey("ACCOUNT_SID", accountId)} / ${envKey("AUTH_TOKEN", accountId)}.`,
     );
   }
 
@@ -82,25 +82,31 @@ export function requireTwilioConfigForAwsAccount(accountId: string): TwilioEnvCo
 }
 
 /**
- * Preferred resolver: account-hierarchy project Twilio, then env by AWS account.
+ * Preferred resolver: twilio-mappings project Twilio, then env by AWS account.
  */
 export async function getTwilioConfigForProject(
   accountId: string,
   projectId: string,
+  roleName?: string | null,
 ): Promise<TwilioEnvConfig | null> {
-  const fromHierarchy = await getTwilioConfigFromHierarchy(accountId, projectId);
-  if (fromHierarchy) return fromHierarchy;
+  const fromMappings = await getTwilioConfigForMappedProject(
+    accountId,
+    projectId,
+    roleName,
+  );
+  if (fromMappings) return fromMappings;
   return getTwilioConfigForAwsAccount(accountId);
 }
 
 export async function requireTwilioConfigForProject(
   accountId: string,
   projectId: string,
+  roleName?: string | null,
 ): Promise<TwilioEnvConfig> {
-  const config = await getTwilioConfigForProject(accountId, projectId);
+  const config = await getTwilioConfigForProject(accountId, projectId, roleName);
   if (config) return config;
   try {
-    return await requireTwilioConfigFromHierarchy(accountId, projectId);
+    return await requireTwilioConfigForMappedProject(accountId, projectId, roleName);
   } catch {
     return requireTwilioConfigForAwsAccount(accountId);
   }

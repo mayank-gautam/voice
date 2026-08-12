@@ -29,7 +29,7 @@ export async function requireProjectTwilio(
   if (!project) {
     return {
       response: apiError(
-        "No project configured for this AWS account in account-hierarchy.json.",
+        "No project configured for this AWS account/role in twilio-mappings.json.",
         400,
         "NO_PROJECT",
       ),
@@ -37,14 +37,18 @@ export async function requireProjectTwilio(
   }
 
   try {
-    const twilio = await requireTwilioConfigForProject(auth.accountId, project.id);
+    const twilio = await requireTwilioConfigForProject(
+      auth.accountId,
+      project.id,
+      auth.roleName,
+    );
     return { project, twilio };
   } catch (error) {
     return {
       response: apiError(
         error instanceof Error
           ? error.message
-          : "Twilio is not configured for this project in account-hierarchy.json.",
+          : "Twilio is not configured for this project in twilio-mappings.json.",
         400,
         "NO_TWILIO",
       ),

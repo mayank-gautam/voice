@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
       awsAccountId: auth.accountId,
       awsRoleName: auth.roleName,
     },
-    source: "account-hierarchy",
+    source: "twilio-mappings",
   });
 }
 

@@ -12,6 +12,7 @@ const PUBLIC_PREFIXES = [
   "/api/auth/session",
   "/api/auth/logout",
   "/api/aws",
+  "/api/mappings",
 ];
 
 export function isPublicPath(pathname: string): boolean {

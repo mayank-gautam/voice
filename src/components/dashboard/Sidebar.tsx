@@ -29,6 +29,7 @@ import {
   Network,
   ClipboardCheck,
   PhoneCall,
+  RefreshCw,
 } from "lucide-react";
 
 import { clearAllCredentials } from "@/lib/credentials-store";
@@ -72,6 +73,15 @@ export const Sidebar = ({ className }: SidebarProps) => {
     }
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     window.location.href = "/sso";
+  };
+
+  const handleSwitchAccount = () => {
+    const returnTo = `${window.location.pathname}${window.location.search}`;
+    const params = new URLSearchParams({ switch: "1" });
+    if (returnTo && returnTo !== "/sso") {
+      params.set("returnTo", returnTo);
+    }
+    window.location.href = `/sso?${params.toString()}`;
   };
 
   return (
@@ -120,6 +130,14 @@ export const Sidebar = ({ className }: SidebarProps) => {
             <Settings className="w-4 h-4" />
             Settings
           </NavLink>
+          <button
+            type="button"
+            onClick={handleSwitchAccount}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Switch Account
+          </button>
           <NavLink
             href="/sso"
             onClick={() => void handleLogout()}

@@ -15,6 +15,7 @@ import {
   Building2,
   CheckCircle2,
   ExternalLink,
+  FolderKanban,
   KeyRound,
   Loader2,
   LogOut,
@@ -34,6 +35,7 @@ import {
   saveAwsSsoToken,
   saveAwsCredentials,
   setSelectedCredentials,
+  setActiveProjectIdSetting,
 } from "@/lib/credentials-store";
 
 import { PROJECTS_CHANGED_EVENT } from "@/lib/projectConfig";
@@ -105,17 +107,38 @@ type AuthState =
       roles: AwsRole[];
     }
   | {
-      kind: "creating-credentials";
+      kind: "loading-projects";
       account: AwsAccount;
       role: AwsRole;
     }
   | {
+      kind: "select-project";
+      account: AwsAccount;
+      role: AwsRole;
+      projects: MappedProjectOption[];
+      defaultProjectId: string | null;
+    }
+  | {
+      kind: "creating-credentials";
+      account: AwsAccount;
+      role: AwsRole;
+      projectId: string;
+    }
+  | {
       kind: "error";
       message: string;
-      retryType: "login" | "accounts" | "roles" | "credentials";
+      retryType: "login" | "accounts" | "roles" | "projects" | "credentials";
       account?: AwsAccount;
       role?: AwsRole;
+      projectId?: string;
     };
+
+type MappedProjectOption = {
+  id: string;
+  name: string;
+  hasTwilio: boolean;
+  hasTenantId: boolean;
+};
 
 type LoginApiResponse = {
   clientId?: string;
@@ -413,7 +436,27 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         throw new Error("No AWS accounts are assigned to this user.");
       }
 
-      const sortedAccounts = [...accounts].sort((first, second) => {
+      // Intersect SSO accounts with twilio-mappings catalog (source of truth).
+      const catalogRes = await fetch("/api/mappings/catalog", { cache: "no-store" });
+      const catalog = (await catalogRes.json().catch(() => ({}))) as {
+        accounts?: Array<{ accountId: string; roles: string[] }>;
+      };
+      const mappedAccountIds = new Set(
+        (catalog.accounts || []).map((entry) => entry.accountId),
+      );
+
+      const filteredAccounts =
+        mappedAccountIds.size > 0
+          ? accounts.filter((account) => mappedAccountIds.has(account.accountId))
+          : [];
+
+      if (filteredAccounts.length === 0) {
+        throw new Error(
+          "No AWS accounts from your SSO session are present in twilio-mappings.json.",
+        );
+      }
+
+      const sortedAccounts = [...filteredAccounts].sort((first, second) => {
         const firstName = first.accountName || first.accountId;
 
         const secondName = second.accountName || second.accountId;
@@ -509,7 +552,27 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         );
       }
 
-      const sortedRoles = [...roles].sort((first, second) =>
+      const catalogRes = await fetch("/api/mappings/catalog", { cache: "no-store" });
+      const catalog = (await catalogRes.json().catch(() => ({}))) as {
+        accounts?: Array<{ accountId: string; roles: string[] }>;
+      };
+      const mappedRoles = new Set(
+        (catalog.accounts || []).find((entry) => entry.accountId === account.accountId)
+          ?.roles || [],
+      );
+
+      const filteredRoles =
+        mappedRoles.size > 0
+          ? roles.filter((role) => mappedRoles.has(role.roleName))
+          : [];
+
+      if (filteredRoles.length === 0) {
+        throw new Error(
+          "No roles for this AWS account are present in twilio-mappings.json.",
+        );
+      }
+
+      const sortedRoles = [...filteredRoles].sort((first, second) =>
         first.roleName.localeCompare(second.roleName),
       );
 
@@ -973,6 +1036,7 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
   async function completeRoleLogin(
     account: AwsAccount,
     role: AwsRole,
+    projectId: string,
     credentials: {
       accountId: string;
       accountName?: string;
@@ -980,12 +1044,26 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
       expiration: string;
     },
   ): Promise<void> {
+    const activeProjectId = projectId.trim();
+    if (!activeProjectId) {
+      throw new Error("A mapped project must be selected.");
+    }
+
+    await setActiveProjectIdSetting(activeProjectId);
+
     await ensureServerSession(
       credentials.accountId,
       credentials.accountName,
       credentials.roleName,
       credentials.expiration,
     );
+
+    // Align server cookie with IndexedDB active project.
+    await fetch(`/api/projects/${encodeURIComponent(activeProjectId)}/activate`, {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+    }).catch(() => undefined);
 
     if (typeof window !== "undefined") {
       window.dispatchEvent(new Event(PROJECTS_CHANGED_EVENT));
@@ -1006,10 +1084,100 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
     router.refresh();
   }
 
+  async function loadMappedProjects(
+    account: AwsAccount,
+    role: AwsRole,
+  ): Promise<void> {
+    selectedAccountRef.current = account;
+    selectedRoleRef.current = role;
+
+    setState({
+      kind: "loading-projects",
+      account,
+      role,
+    });
+
+    const response = await fetch("/api/mappings/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({
+        accountId: account.accountId,
+        roleName: role.roleName,
+      }),
+    });
+
+    const data = (await response.json().catch(() => ({}))) as {
+      success?: boolean;
+      projects?: MappedProjectOption[];
+      defaultProjectId?: string | null;
+      error?: { message?: string };
+      message?: string;
+    };
+
+    if (!response.ok || data.success === false) {
+      throw new Error(
+        data?.error?.message ||
+          data?.message ||
+          "Unable to load mapped projects for this account and role.",
+      );
+    }
+
+    const projects = data.projects || [];
+    if (projects.length === 0) {
+      throw new Error(
+        "No projects are mapped for this AWS account and role in twilio-mappings.json.",
+      );
+    }
+
+    setState({
+      kind: "select-project",
+      account,
+      role,
+      projects,
+      defaultProjectId: data.defaultProjectId ?? null,
+    });
+  }
+
+  /** Role click → show mapped projects (do not authorize yet). */
   async function handleRoleSelect(
     account: AwsAccount,
     role: AwsRole,
   ): Promise<void> {
+    try {
+      await loadMappedProjects(account, role);
+    } catch (error) {
+      setState({
+        kind: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to load mapped projects.",
+        retryType: "projects",
+        account,
+        role,
+      });
+    }
+  }
+
+  /** Use Credentials → AWS role creds + active project in IndexedDB + enter app. */
+  async function handleUseCredentials(
+    account: AwsAccount,
+    role: AwsRole,
+    projectId: string,
+  ): Promise<void> {
+    const activeProjectId = projectId.trim();
+    if (!activeProjectId) {
+      setState({
+        kind: "error",
+        message: "Select a mapped project before continuing.",
+        retryType: "projects",
+        account,
+        role,
+      });
+      return;
+    }
+
     try {
       selectedAccountRef.current = account;
       selectedRoleRef.current = role;
@@ -1018,12 +1186,9 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         kind: "creating-credentials",
         account,
         role,
+        projectId: activeProjectId,
       });
 
-      /*
-       * Reuse valid IndexedDB role credentials when present for this
-       * account::role. Only call GetRoleCredentials when missing/expired.
-       */
       const existing = await getCredentials(account.accountId, role.roleName);
 
       if (
@@ -1035,7 +1200,7 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
       ) {
         await setSelectedCredentials(existing.id);
 
-        await completeRoleLogin(account, role, {
+        await completeRoleLogin(account, role, activeProjectId, {
           accountId: existing.accountId,
           accountName: existing.accountName || account.accountName,
           roleName: existing.roleName,
@@ -1146,7 +1311,7 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         expiration: awsCredentials.expiration,
       });
 
-      // Twilio credentials remain server-side in account-hierarchy (never cached in IndexedDB).
+      // Twilio stays server-side in twilio-mappings (never cached in IndexedDB).
 
       const selectedCredentials = await getSelectedCredentials();
 
@@ -1159,7 +1324,7 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         );
       }
 
-      await completeRoleLogin(account, role, {
+      await completeRoleLogin(account, role, activeProjectId, {
         accountId: savedCredentials.accountId,
         accountName: savedCredentials.accountName,
         roleName: savedCredentials.roleName,
@@ -1180,6 +1345,7 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         retryType: "credentials",
         account,
         role,
+        projectId: activeProjectId,
       });
     }
   }
@@ -1265,9 +1431,24 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         }
 
         case "credentials": {
+          if (state.account && state.role && state.projectId) {
+            await handleUseCredentials(state.account, state.role, state.projectId);
+
+            return;
+          }
+
           if (state.account && state.role) {
             await handleRoleSelect(state.account, state.role);
+            return;
+          }
 
+          await startLogin();
+          return;
+        }
+
+        case "projects": {
+          if (state.account && state.role) {
+            await handleRoleSelect(state.account, state.role);
             return;
           }
 
@@ -1486,9 +1667,52 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         </div>
 
         <p className="text-center text-xs text-muted-foreground">
-          Temporary AWS credentials will be generated for the selected role.
+          Next: choose a project mapped for this account and role in
+          twilio-mappings.
         </p>
       </section>
+    );
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /* Project selection                                                        */
+  /* ------------------------------------------------------------------------ */
+
+  if (state.kind === "select-project") {
+    return (
+      <ProjectPickerSection
+        account={state.account}
+        role={state.role}
+        projects={state.projects}
+        defaultProjectId={state.defaultProjectId}
+        isLoggingOut={isLoggingOut}
+        onLogout={() => void logout()}
+        onBack={() => {
+          void (async () => {
+            try {
+              let accessToken = accessTokenRef.current;
+              let region = regionRef.current;
+              if (!accessToken) {
+                const cached = await getValidAwsSsoToken();
+                if (!cached) {
+                  await handleBackToAccounts();
+                  return;
+                }
+                accessToken = cached.accessToken;
+                region = cached.region;
+                accessTokenRef.current = accessToken;
+                regionRef.current = region;
+              }
+              await fetchAwsRoles(state.account, accessToken, region);
+            } catch {
+              await handleAccountSelect(state.account);
+            }
+          })();
+        }}
+        onUseCredentials={(projectId) =>
+          void handleUseCredentials(state.account, state.role, projectId)
+        }
+      />
     );
   }
 
@@ -1516,11 +1740,20 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
     );
   }
 
+  if (state.kind === "loading-projects") {
+    return (
+      <LoadingSection
+        title="Loading mapped projects"
+        description={`Reading projects for ${state.role.roleName} from twilio-mappings.`}
+      />
+    );
+  }
+
   if (state.kind === "creating-credentials") {
     return (
       <LoadingSection
         title="Authorizing selected role"
-        description={`Generating temporary credentials for ${state.role.roleName}.`}
+        description={`Generating temporary credentials for ${state.role.roleName} and activating project ${state.projectId}.`}
       />
     );
   }
@@ -1699,6 +1932,131 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
 /* -------------------------------------------------------------------------- */
 /* Helper Components                                                          */
 /* -------------------------------------------------------------------------- */
+
+function ProjectPickerSection({
+  account,
+  role,
+  projects,
+  defaultProjectId,
+  isLoggingOut,
+  onLogout,
+  onBack,
+  onUseCredentials,
+}: {
+  account: AwsAccount;
+  role: AwsRole;
+  projects: MappedProjectOption[];
+  defaultProjectId: string | null;
+  isLoggingOut: boolean;
+  onLogout: () => void;
+  onBack: () => void;
+  onUseCredentials: (projectId: string) => void;
+}) {
+  const initial =
+    (defaultProjectId && projects.some((project) => project.id === defaultProjectId)
+      ? defaultProjectId
+      : projects[0]?.id) || "";
+  const [projectId, setProjectId] = useState(initial);
+
+  return (
+    <section className="animate-slide-up space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className={iconButtonClass}
+            aria-label="Back to roles"
+            title="Back to roles"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+
+          <div>
+            <SuccessBadge>Role selected</SuccessBadge>
+
+            <h2 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">
+              Choose a project
+            </h2>
+
+            <p className="mt-2 text-sm text-muted-foreground">
+              {account.accountName || account.accountId}
+            </p>
+
+            <p className="mt-1 font-mono text-xs text-muted-foreground">
+              {role.roleName}
+            </p>
+          </div>
+        </div>
+
+        <LogoutButton loading={isLoggingOut} onClick={onLogout} />
+      </div>
+
+      <label className="block space-y-1.5">
+        <span className="text-xs uppercase tracking-wider text-muted-foreground">
+          Project
+        </span>
+        <select
+          className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm"
+          value={projectId}
+          onChange={(event) => setProjectId(event.target.value)}
+        >
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.name}
+              {project.hasTwilio ? "" : " (no Twilio)"}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
+        {projects.map((project) => {
+          const active = project.id === projectId;
+          return (
+            <button
+              key={project.id}
+              type="button"
+              onClick={() => setProjectId(project.id)}
+              className={cn(
+                "group w-full rounded-2xl border border-border/60 bg-background/40 p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:bg-primary/5",
+                active && "border-primary/50 bg-primary/5",
+              )}
+            >
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500">
+                  <FolderKanban className="h-6 w-6" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="truncate font-semibold text-foreground">
+                    {project.name}
+                  </h3>
+                  <p className="mt-1 font-mono text-xs text-muted-foreground">
+                    {project.id}
+                  </p>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <button
+        type="button"
+        className={cn(primaryButtonClass, "w-full")}
+        disabled={!projectId}
+        onClick={() => onUseCredentials(projectId)}
+      >
+        Use Credentials
+      </button>
+
+      <p className="text-center text-xs text-muted-foreground">
+        Temporary AWS credentials will be generated and this project will be
+        saved as active in IndexedDB.
+      </p>
+    </section>
+  );
+}
 
 function SuccessBadge({ children }: { children: ReactNode }) {
   return (

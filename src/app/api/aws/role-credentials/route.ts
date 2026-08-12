@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { GetRoleCredentialsCommand, SSOClient } from "@aws-sdk/client-sso";
 
 import {
-  accountHasHierarchyProjects,
-  listHierarchyProjectsForAccount,
-} from "@/lib/server/accountHierarchy";
+  accountHasMappedProjects,
+  listMappedProjectScopes,
+} from "@/lib/server/twilioMappings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Twilio stays server-side in account-hierarchy. Never return auth tokens.
-    const projects = await listHierarchyProjectsForAccount(accountId, roleName);
+    const projects = await listMappedProjectScopes(accountId, roleName);
     const twilioConfigured = projects.some((project) => project.hasTwilio);
 
     return NextResponse.json(
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
           sessionToken,
           expiration: expirationDate.toISOString(),
         },
-        hierarchyConfigured: await accountHasHierarchyProjects(accountId),
+        hierarchyConfigured: await accountHasMappedProjects(accountId),
         projectCount: projects.length,
         twilioConfigured,
       },
