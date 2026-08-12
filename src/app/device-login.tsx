@@ -1468,7 +1468,7 @@ export function DeviceLogin({
         onClick={() => void startLogin()}
         disabled={isStartingLogin}
       >
-        {isStartingLogin ? "Starting…" : "Sign in with AWS"}
+        {isStartingLogin ? "Starting…" : "Sign in with AWS SSO"}
       </button>
     </div>
   );
@@ -1488,7 +1488,7 @@ function SignOutButton({
   return (
     <button
       type="button"
-      className={secondaryButtonClass}
+      className="inline-flex items-center justify-center rounded-lg border border-border bg-transparent px-5 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
       disabled={loading}
       onClick={onClick}
     >
@@ -1663,113 +1663,118 @@ function AccountScopePicker({
   const busy = loadingRoles || loadingProjects || pending;
 
   return (
-    <section className="animate-slide-up flex flex-col space-y-4">
+    <section className="glass-card animate-slide-up flex h-full flex-col space-y-4 p-6">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-medium uppercase tracking-wider text-emerald-500">
-            AWS authenticated
-          </p>
-          <h2 className="mt-1 text-lg font-semibold text-foreground">
-            Choose account, role & project
+          <h2 className="text-lg font-semibold text-foreground">
+            Choose AWS account & role
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            After you pick a role, projects load from{" "}
-            <span className="font-mono text-xs">
-              twilio-mappings → accountId:roleName
-            </span>
-            . The first project is selected; continue opens the home page.
+            Session is stored in IndexedDB. Switch accounts without a new device
+            code.
           </p>
         </div>
         <SignOutButton loading={isLoggingOut} onClick={onLogout} />
       </div>
 
-      <label className="block space-y-1.5">
-        <span className="text-xs uppercase tracking-wider text-muted-foreground">
-          Account
-        </span>
-        <select
-          className={selectClass}
-          value={accountId}
-          onChange={(event) => setAccountId(event.target.value)}
-          disabled={busy || accounts.length === 0}
-        >
-          {accounts.length === 0 && <option value="">No accounts found</option>}
-          {accounts.map((account) => (
-            <option key={account.accountId} value={account.accountId}>
-              {(account.accountName || "Account") + ` (${account.accountId})`}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="block space-y-1.5">
-        <span className="text-xs uppercase tracking-wider text-muted-foreground">
-          Role
-        </span>
-        <select
-          className={selectClass}
-          value={roleName}
-          onChange={(event) => setRoleName(event.target.value)}
-          disabled={busy || roles.length === 0}
-        >
-          {loadingRoles ? (
-            <option value="">Loading roles…</option>
-          ) : roles.length === 0 ? (
-            <option value="">No roles in this account</option>
-          ) : (
-            roles.map((role) => (
-              <option
-                key={`${role.accountId}:${role.roleName}`}
-                value={role.roleName}
-              >
-                {role.roleName}
-              </option>
-            ))
-          )}
-        </select>
-      </label>
-
-      <label className="block space-y-1.5">
-        <span className="text-xs uppercase tracking-wider text-muted-foreground">
-          Project
-        </span>
-        <select
-          className={selectClass}
-          value={projectId}
-          onChange={(event) => setProjectId(event.target.value)}
-          disabled={busy || projects.length === 0}
-        >
-          {loadingProjects ? (
-            <option value="">Loading projects…</option>
-          ) : projects.length === 0 ? (
-            <option value="">No mapped projects</option>
-          ) : (
-            projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-                {project.hasTwilio ? "" : " (no Twilio)"}
-              </option>
-            ))
-          )}
-        </select>
-      </label>
-
-      {error && (
-        <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {error}
+      {(loadingRoles && roles.length === 0 && !accountId) ? (
+        <p className="text-sm text-muted-foreground animate-pulse-glow">
+          Loading accounts…
         </p>
-      )}
+      ) : (
+        <div className="space-y-4">
+          <label className="block space-y-1.5">
+            <span className="text-xs uppercase tracking-wider text-muted-foreground">
+              Account
+            </span>
+            <select
+              className={selectClass}
+              value={accountId}
+              onChange={(event) => setAccountId(event.target.value)}
+              disabled={busy || accounts.length === 0}
+            >
+              {accounts.length === 0 && (
+                <option value="">No accounts found</option>
+              )}
+              {accounts.map((account) => (
+                <option key={account.accountId} value={account.accountId}>
+                  {(account.accountName || "Account") +
+                    ` (${account.accountId})`}
+                </option>
+              ))}
+            </select>
+          </label>
 
-      <button
-        type="button"
-        className={cn(primaryButtonClass, "w-full sm:w-auto")}
-        disabled={
-          busy || !selectedAccount || !selectedRole || !projectId.trim()
-        }
-        onClick={continueToApp}
-      >
-        {pending ? "Opening…" : "Continue"}
-      </button>
+          <label className="block space-y-1.5">
+            <span className="text-xs uppercase tracking-wider text-muted-foreground">
+              Role
+            </span>
+            <select
+              className={selectClass}
+              value={roleName}
+              onChange={(event) => setRoleName(event.target.value)}
+              disabled={busy || roles.length === 0}
+            >
+              {loadingRoles ? (
+                <option value="">Loading roles…</option>
+              ) : roles.length === 0 ? (
+                <option value="">No roles in this account</option>
+              ) : (
+                roles.map((role) => (
+                  <option
+                    key={`${role.accountId}:${role.roleName}`}
+                    value={role.roleName}
+                  >
+                    {role.roleName}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+
+          <label className="block space-y-1.5">
+            <span className="text-xs uppercase tracking-wider text-muted-foreground">
+              Project
+            </span>
+            <select
+              className={selectClass}
+              value={projectId}
+              onChange={(event) => setProjectId(event.target.value)}
+              disabled={busy || projects.length === 0}
+            >
+              {loadingProjects ? (
+                <option value="">Loading projects…</option>
+              ) : projects.length === 0 ? (
+                <option value="">No mapped projects</option>
+              ) : (
+                projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                    {project.hasTwilio ? "" : " (no Twilio)"}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+
+          {error && (
+            <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </p>
+          )}
+
+          <button
+            type="button"
+            className={cn(primaryButtonClass, "w-full sm:w-auto")}
+            disabled={
+              busy || !selectedAccount || !selectedRole || !projectId.trim()
+            }
+            onClick={continueToApp}
+          >
+            {pending ? "Opening…" : "Continue"}
+          </button>
+        </div>
+      )}
     </section>
   );
 }

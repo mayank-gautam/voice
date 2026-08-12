@@ -289,3 +289,7 @@
 .animate-pulse-glow {
   animation: pulse-glow 1.6s ease-in-out infinite;
 }
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out;
+}

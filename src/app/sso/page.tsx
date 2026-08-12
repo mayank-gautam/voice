@@ -14,19 +14,17 @@ export default async function SsoPage() {
     : null;
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background">
-      <div className="fixed right-5 top-5 z-50">
+    <div className="relative flex min-h-screen items-start justify-center overflow-x-hidden bg-background p-4 sm:p-6 lg:items-center lg:p-8">
+      <div className="fixed right-4 top-4 z-50">
         <ThemeToggle />
       </div>
 
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.15),transparent_30%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_right,hsl(var(--accent)/0.12),transparent_40%)]" />
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,hsl(var(--border)/0.1)_1px,transparent_1px),linear-gradient(to_bottom,hsl(var(--border)/0.1)_1px,transparent_1px)] bg-[size:48px_48px]" />
-        <div className="absolute left-1/2 top-1/2 h-[460px] w-[460px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/5 blur-[130px]" />
-      </div>
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,hsl(var(--primary)/0.12),transparent_55%),radial-gradient(ellipse_at_bottom_right,hsl(var(--accent)/0.08),transparent_50%)]"
+      />
 
-      <main className="relative z-10 flex min-h-screen items-center justify-center px-6 py-16">
+      <main className="relative z-10 w-full max-w-6xl animate-fade-in py-8 lg:py-0">
         <SsoClient initialSession={initialSession} />
       </main>
     </div>
