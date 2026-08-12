@@ -22,7 +22,6 @@ import {
   setSelectedCredentials,
   setActiveProjectIdSetting,
   getActiveProjectIdSetting,
-  clearActiveProjectIdSetting,
 } from "@/lib/credentials-store";
 
 import { PROJECTS_CHANGED_EVENT } from "@/lib/projectConfig";
@@ -55,7 +54,17 @@ type SessionSummary = {
 
 type DeviceLoginProps = {
   initialSession?: SessionSummary | null;
+  /** Notifies the SSO page so it can switch sign-in vs account-selection chrome. */
+  onPhaseChange?: (phase: SsoUiPhase) => void;
 };
+
+export type SsoUiPhase =
+  | "checking"
+  | "sign-in"
+  | "waiting"
+  | "select-scope"
+  | "loading"
+  | "error";
 
 type DeviceAuthorizationData = {
   clientId: string;
@@ -274,7 +283,10 @@ function isTokenError(status: number, message: string): boolean {
 /* Main Component                                                             */
 /* -------------------------------------------------------------------------- */
 
-export function DeviceLogin({ initialSession }: DeviceLoginProps) {
+export function DeviceLogin({
+  initialSession,
+  onPhaseChange,
+}: DeviceLoginProps) {
   const router = useRouter();
 
   const [state, setState] = useState<AuthState>({
@@ -298,6 +310,33 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
   const selectedRoleRef = useRef<AwsRole | null>(null);
 
   const redirectStartedRef = useRef(false);
+
+  useEffect(() => {
+    if (!onPhaseChange) return;
+    switch (state.kind) {
+      case "checking-session":
+        onPhaseChange("checking");
+        break;
+      case "idle":
+        onPhaseChange("sign-in");
+        break;
+      case "waiting":
+        onPhaseChange("waiting");
+        break;
+      case "select-scope":
+        onPhaseChange("select-scope");
+        break;
+      case "loading-accounts":
+      case "creating-credentials":
+        onPhaseChange("loading");
+        break;
+      case "error":
+        onPhaseChange("error");
+        break;
+      default:
+        onPhaseChange("sign-in");
+    }
+  }, [state.kind, onPhaseChange]);
 
   /* ------------------------------------------------------------------------ */
   /* Create or restore server cookie session                                  */
@@ -525,25 +564,36 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
   );
 
   /**
-   * Resolve active project from IndexedDB only (never JSON defaultProject).
-   * Keeps the stored id when it is still valid for this account/role mapping.
+   * Prefer IndexedDB project when still mapped for this account/role;
+   * otherwise use the only mapped project, else require an explicit pick.
+   * Never uses JSON defaultProject.
    */
-  const resolveStoredProjectId = useCallback(
-    async (account: AwsAccount, role: AwsRole): Promise<string | null> => {
-      const stored = await getActiveProjectIdSetting().catch(() => null);
-      if (!stored?.trim()) return null;
-
-      try {
-        const projects = await loadProjectsForRole(account, role);
-        if (projects.some((project) => project.id === stored)) {
-          return stored;
-        }
-      } catch {
-        // Mapping may not exist for this account/role; clear invalid project.
+  const resolveProjectIdForRole = useCallback(
+    async (
+      account: AwsAccount,
+      role: AwsRole,
+      preferredProjectId?: string | null,
+    ): Promise<{ projectId: string | null; projects: MappedProjectOption[] }> => {
+      const projects = await loadProjectsForRole(account, role);
+      if (projects.length === 0) {
+        return { projectId: null, projects };
       }
 
-      await clearActiveProjectIdSetting().catch(() => undefined);
-      return null;
+      const preferred = preferredProjectId?.trim();
+      if (preferred && projects.some((project) => project.id === preferred)) {
+        return { projectId: preferred, projects };
+      }
+
+      const stored = await getActiveProjectIdSetting().catch(() => null);
+      if (stored && projects.some((project) => project.id === stored)) {
+        return { projectId: stored, projects };
+      }
+
+      if (projects.length === 1) {
+        return { projectId: projects[0].id, projects };
+      }
+
+      return { projectId: null, projects };
     },
     [loadProjectsForRole],
   );
@@ -964,7 +1014,7 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
   async function completeRoleLogin(
     account: AwsAccount,
     role: AwsRole,
-    projectId: string | null,
+    projectId: string,
     credentials: {
       accountId: string;
       accountName?: string;
@@ -972,11 +1022,12 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
       expiration: string;
     },
   ): Promise<void> {
-    const activeProjectId = projectId?.trim() || null;
-
-    if (activeProjectId) {
-      await setActiveProjectIdSetting(activeProjectId);
+    const activeProjectId = projectId.trim();
+    if (!activeProjectId) {
+      throw new Error("A mapped project must be selected.");
     }
+
+    await setActiveProjectIdSetting(activeProjectId);
 
     await ensureServerSession(
       credentials.accountId,
@@ -985,14 +1036,11 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
       credentials.expiration,
     );
 
-    if (activeProjectId) {
-      // Align server cookie with IndexedDB active project.
-      await fetch(`/api/projects/${encodeURIComponent(activeProjectId)}/activate`, {
-        method: "POST",
-        credentials: "include",
-        cache: "no-store",
-      }).catch(() => undefined);
-    }
+    await fetch(`/api/projects/${encodeURIComponent(activeProjectId)}/activate`, {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+    }).catch(() => undefined);
 
     if (typeof window !== "undefined") {
       window.dispatchEvent(new Event(PROJECTS_CHANGED_EVENT));
@@ -1013,12 +1061,24 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
     router.refresh();
   }
 
-  /** Use This Account → AWS role creds + preserve IndexedDB project + enter app. */
+  /** Use This Account → role creds + open mapped project from twilio-mappings. */
   async function handleUseThisAccount(
     account: AwsAccount,
     role: AwsRole,
+    projectId: string,
   ): Promise<void> {
-    const activeProjectId = await resolveStoredProjectId(account, role);
+    const activeProjectId = projectId.trim();
+    if (!activeProjectId) {
+      setState({
+        kind: "error",
+        message:
+          "Select a project mapped for this account and role in twilio-mappings.json.",
+        retryType: "projects",
+        account,
+        role,
+      });
+      return;
+    }
 
     try {
       selectedAccountRef.current = account;
@@ -1028,7 +1088,7 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         kind: "creating-credentials",
         account,
         role,
-        projectId: activeProjectId || "",
+        projectId: activeProjectId,
       });
 
       const existing = await getCredentials(account.accountId, role.roleName);
@@ -1185,7 +1245,7 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         retryType: "credentials",
         account,
         role,
-        projectId: activeProjectId || undefined,
+        projectId: activeProjectId,
       });
     }
   }
@@ -1214,8 +1274,12 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         }
 
         case "credentials": {
-          if (state.account && state.role) {
-            await handleUseThisAccount(state.account, state.role);
+          if (state.account && state.role && state.projectId) {
+            await handleUseThisAccount(
+              state.account,
+              state.role,
+              state.projectId,
+            );
             return;
           }
 
@@ -1316,8 +1380,9 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         onLogout={() => void logout()}
         resolveAccessToken={resolveAccessToken}
         loadRoles={loadRolesForAccount}
-        onUseThisAccount={(account, role) =>
-          void handleUseThisAccount(account, role)
+        resolveProjectId={resolveProjectIdForRole}
+        onUseThisAccount={(account, role, projectId) =>
+          void handleUseThisAccount(account, role, projectId)
         }
         onTokenExpired={handleTokenExpired}
       />
@@ -1474,6 +1539,7 @@ function AccountScopePicker({
   onLogout,
   resolveAccessToken,
   loadRoles,
+  resolveProjectId,
   onUseThisAccount,
   onTokenExpired,
 }: {
@@ -1486,13 +1552,25 @@ function AccountScopePicker({
     accessToken: string,
     region: string,
   ) => Promise<AwsRole[]>;
-  onUseThisAccount: (account: AwsAccount, role: AwsRole) => void;
+  resolveProjectId: (
+    account: AwsAccount,
+    role: AwsRole,
+    preferredProjectId?: string | null,
+  ) => Promise<{ projectId: string | null; projects: MappedProjectOption[] }>;
+  onUseThisAccount: (
+    account: AwsAccount,
+    role: AwsRole,
+    projectId: string,
+  ) => void;
   onTokenExpired: () => void;
 }) {
   const [accountId, setAccountId] = useState(accounts[0]?.accountId || "");
   const [roleName, setRoleName] = useState("");
+  const [projectId, setProjectId] = useState("");
   const [roles, setRoles] = useState<AwsRole[]>([]);
+  const [projects, setProjects] = useState<MappedProjectOption[]>([]);
   const [loadingRoles, setLoadingRoles] = useState(false);
+  const [loadingProjects, setLoadingProjects] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -1513,6 +1591,8 @@ function AccountScopePicker({
       if (!account) {
         setRoles([]);
         setRoleName("");
+        setProjects([]);
+        setProjectId("");
         return;
       }
 
@@ -1520,6 +1600,8 @@ function AccountScopePicker({
       setError(null);
       setRoles([]);
       setRoleName("");
+      setProjects([]);
+      setProjectId("");
 
       try {
         const token = await resolveAccessToken();
@@ -1557,18 +1639,69 @@ function AccountScopePicker({
     };
   }, [accountId, accounts, loadRoles, resolveAccessToken, onTokenExpired]);
 
-  const busy = loadingRoles || pending;
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      const account = accounts.find((item) => item.accountId === accountId);
+      const role = roles.find((item) => item.roleName === roleName);
+      if (!account || !role) {
+        setProjects([]);
+        setProjectId("");
+        return;
+      }
+
+      setLoadingProjects(true);
+      setError(null);
+      setProjects([]);
+      setProjectId("");
+
+      try {
+        const resolved = await resolveProjectId(account, role);
+        if (cancelled) return;
+
+        setProjects(resolved.projects);
+        if (resolved.projects.length === 0) {
+          setError(
+            "No projects are mapped for this account and role in twilio-mappings.json.",
+          );
+          setProjectId("");
+        } else {
+          setProjectId(resolved.projectId || "");
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load projects from twilio-mappings.",
+        );
+      } finally {
+        if (!cancelled) setLoadingProjects(false);
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, roleName, accounts, roles, resolveProjectId]);
+
+  const busy = loadingRoles || loadingProjects || pending;
 
   return (
-    <section className="glass-card animate-slide-up flex flex-col space-y-4 p-6">
+    <section className="animate-slide-up flex flex-col space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">
-            Choose AWS account & role
+          <p className="text-xs font-medium uppercase tracking-wider text-emerald-500">
+            AWS authenticated
+          </p>
+          <h2 className="mt-1 text-lg font-semibold text-foreground">
+            Choose account, role & project
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Accounts and roles come from your AWS SSO session. Switch without a
-            new device code while the token is valid.
+            Roles come from AWS SSO. Projects load from twilio-mappings for the
+            selected role and open in the app.
           </p>
         </div>
         <SignOutButton loading={isLoggingOut} onClick={onLogout} />
@@ -1620,6 +1753,38 @@ function AccountScopePicker({
         </select>
       </label>
 
+      <label className="block space-y-1.5">
+        <span className="text-xs uppercase tracking-wider text-muted-foreground">
+          Project
+        </span>
+        <select
+          className={selectClass}
+          value={projectId}
+          onChange={(event) => setProjectId(event.target.value)}
+          disabled={busy || projects.length === 0}
+        >
+          {loadingProjects ? (
+            <option value="">Loading projects…</option>
+          ) : projects.length === 0 ? (
+            <option value="">No mapped projects</option>
+          ) : (
+            <>
+              {!projectId && (
+                <option value="" disabled>
+                  Select a project…
+                </option>
+              )}
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                  {project.hasTwilio ? "" : " (no Twilio)"}
+                </option>
+              ))}
+            </>
+          )}
+        </select>
+      </label>
+
       {error && (
         <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
@@ -1629,14 +1794,16 @@ function AccountScopePicker({
       <button
         type="button"
         className={cn(primaryButtonClass, "w-full sm:w-auto")}
-        disabled={busy || !selectedAccount || !selectedRole}
+        disabled={
+          busy || !selectedAccount || !selectedRole || !projectId.trim()
+        }
         onClick={() => {
-          if (!selectedAccount || !selectedRole) return;
+          if (!selectedAccount || !selectedRole || !projectId.trim()) return;
           setPending(true);
-          onUseThisAccount(selectedAccount, selectedRole);
+          onUseThisAccount(selectedAccount, selectedRole, projectId.trim());
         }}
       >
-        {pending ? "Fetching credentials…" : "Use This Account"}
+        {pending ? "Opening project…" : "Use This Account"}
       </button>
     </section>
   );
