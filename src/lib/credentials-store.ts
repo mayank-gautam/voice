@@ -117,6 +117,8 @@ const SETTINGS_STORE = "appSettings";
 
 const SELECTED_CREDENTIALS_KEY = "selectedCredentialsId";
 
+const ACTIVE_PROJECT_ID_KEY = "activeProjectId";
+
 const AWS_SSO_TOKEN_KEY = "awsSsoToken";
 
 /** Map of AWS account ID → Twilio credentials (from server env, cached in IDB). */
@@ -1177,6 +1179,53 @@ export async function clearSelectedCredentials(): Promise<void> {
   }
 
   await transaction.done;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Active project (AppSettings)                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Read the active projectId from IndexedDB appSettings.
+ * This is the client source of truth for the current project.
+ */
+export async function getActiveProjectIdSetting(): Promise<string | null> {
+  if (!isBrowser()) return null;
+
+  const database = await getDatabase();
+  const setting = await database.get(SETTINGS_STORE, ACTIVE_PROJECT_ID_KEY);
+  return getStringSettingValue(setting);
+}
+
+/**
+ * Persist the active projectId in IndexedDB appSettings.
+ */
+export async function setActiveProjectIdSetting(projectId: string): Promise<void> {
+  const normalized = projectId.trim();
+  if (!normalized) {
+    throw new Error("Project ID is required.");
+  }
+  if (!isBrowser()) return;
+
+  const database = await getDatabase();
+  const now = new Date().toISOString();
+
+  await database.put(SETTINGS_STORE, {
+    key: ACTIVE_PROJECT_ID_KEY,
+    value: normalized,
+    updatedAt: now,
+  });
+
+  const saved = await database.get(SETTINGS_STORE, ACTIVE_PROJECT_ID_KEY);
+  if (getStringSettingValue(saved) !== normalized) {
+    throw new Error("Active project setting could not be saved.");
+  }
+}
+
+export async function clearActiveProjectIdSetting(): Promise<void> {
+  if (!isBrowser()) return;
+  const database = await getDatabase();
+  await database.delete(SETTINGS_STORE, ACTIVE_PROJECT_ID_KEY);
 }
 
 /* -------------------------------------------------------------------------- */

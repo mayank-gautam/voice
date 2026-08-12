@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_CLOUDWATCH_INSIGHTS_FILTER } from "@/lib/cloudWatchInsightsQuery";
 import { apiFetch, type ApiClientError } from "@/lib/api-client";
+import {
+  clearActiveProjectIdSetting,
+  getActiveProjectIdSetting,
+  setActiveProjectIdSetting,
+} from "@/lib/credentials-store";
 
 export interface ProjectConfig {
   id: string;
@@ -20,7 +25,6 @@ export interface ProjectConfig {
   updatedAt: string;
 }
 
-const ACTIVE_KEY = "voiceai.activeProjectId";
 export const PROJECTS_CHANGED_EVENT = "voiceai:projects-changed";
 const EVENT = PROJECTS_CHANGED_EVENT;
 
@@ -67,14 +71,71 @@ async function parseJson<T>(res: Response): Promise<T> {
   return data as T;
 }
 
+type ProjectsApiResponse = {
+  projects: ProjectConfig[];
+  defaultProjectId: string | null;
+  activeProjectId: string | null;
+};
+
+/**
+ * Resolve active project from IndexedDB AppSettings (source of truth).
+ * Falls back to hierarchy defaultProject and persists it when needed.
+ */
+async function resolveClientActiveProjectId(
+  projects: ProjectConfig[],
+  defaultProjectId: string | null,
+): Promise<{ activeProjectId: string | null; didChange: boolean }> {
+  const validIds = new Set(projects.map((project) => project.id));
+  const stored = await getActiveProjectIdSetting().catch(() => null);
+
+  if (stored && validIds.has(stored)) {
+    return { activeProjectId: stored, didChange: false };
+  }
+
+  const fallback =
+    defaultProjectId && validIds.has(defaultProjectId) ? defaultProjectId : null;
+
+  if (fallback) {
+    await setActiveProjectIdSetting(fallback);
+    return { activeProjectId: fallback, didChange: true };
+  }
+
+  if (stored) {
+    await clearActiveProjectIdSetting().catch(() => undefined);
+  }
+  return { activeProjectId: null, didChange: Boolean(stored) };
+}
+
+/** Keep the server cookie aligned so API routes without ?projectId still resolve. */
+async function syncActiveProjectCookie(projectId: string): Promise<void> {
+  await parseJson(
+    await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/activate`, {
+      method: "POST",
+    }),
+  );
+}
+
 export async function fetchProjects(): Promise<{
   projects: ProjectConfig[];
   activeProjectId: string | null;
+  defaultProjectId: string | null;
 }> {
-  const data = await parseJson<{ projects: ProjectConfig[]; activeProjectId: string | null }>(
-    await apiFetch("/api/projects"),
+  const data = await parseJson<ProjectsApiResponse>(await apiFetch("/api/projects"));
+  const resolved = await resolveClientActiveProjectId(
+    data.projects,
+    data.defaultProjectId ?? null,
   );
-  return data;
+
+  if (resolved.activeProjectId) {
+    // Keep server cookie aligned (SSO re-login clears cookies; IndexedDB may still have projectId).
+    await syncActiveProjectCookie(resolved.activeProjectId).catch(() => undefined);
+  }
+
+  return {
+    projects: data.projects,
+    activeProjectId: resolved.activeProjectId,
+    defaultProjectId: data.defaultProjectId ?? null,
+  };
 }
 
 export async function upsertProject(project: ProjectConfig): Promise<ProjectConfig> {
@@ -99,38 +160,39 @@ export async function upsertProject(project: ProjectConfig): Promise<ProjectConf
       body: JSON.stringify(project),
     }),
   );
-  if (isBrowser()) localStorage.setItem(ACTIVE_KEY, data.project.id);
+  await setActiveProjectIdSetting(data.project.id);
   notify();
   return data.project;
 }
 
 export async function deleteProject(id: string): Promise<void> {
   await parseJson(await apiFetch(`/api/projects/${id}`, { method: "DELETE" }));
-  if (isBrowser() && localStorage.getItem(ACTIVE_KEY) === id) {
-    localStorage.removeItem(ACTIVE_KEY);
+  const stored = await getActiveProjectIdSetting().catch(() => null);
+  if (stored === id) {
+    await clearActiveProjectIdSetting().catch(() => undefined);
   }
   notify();
 }
 
 export async function activateProject(id: string): Promise<void> {
-  await parseJson(await apiFetch(`/api/projects/${id}/activate`, { method: "POST" }));
-  if (isBrowser()) localStorage.setItem(ACTIVE_KEY, id);
+  await setActiveProjectIdSetting(id);
+  await syncActiveProjectCookie(id);
   notify();
 }
 
-export const getActiveProjectId = (): string | null =>
-  isBrowser() ? localStorage.getItem(ACTIVE_KEY) : null;
+export async function getActiveProjectId(): Promise<string | null> {
+  return getActiveProjectIdSetting();
+}
 
 export async function checkConfigured(): Promise<boolean> {
   try {
     const data = await fetchProjects();
     return data.projects.length > 0;
   } catch {
-    return Boolean(getActiveProjectId());
+    const stored = await getActiveProjectIdSetting().catch(() => null);
+    return Boolean(stored);
   }
 }
-
-export const isConfigured = () => Boolean(getActiveProjectId());
 
 export const useProjects = () => {
   const [projects, setProjects] = useState<ProjectConfig[]>([]);
@@ -144,9 +206,6 @@ export const useProjects = () => {
       const data = await fetchProjects();
       setProjects(data.projects);
       setActiveId(data.activeProjectId);
-      if (isBrowser() && data.activeProjectId) {
-        localStorage.setItem(ACTIVE_KEY, data.activeProjectId);
-      }
     } catch (e) {
       // Shared apiFetch already started single-flight SSO redirect.
       if ((e as ApiClientError)?.code === "AUTH_REQUIRED") {

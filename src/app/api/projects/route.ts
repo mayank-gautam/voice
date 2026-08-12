@@ -9,6 +9,8 @@ export async function GET(request: NextRequest) {
   const auth = await requireAuth();
   if (!isAuthOk(auth)) return auth.response;
 
+  // Cookie/query preferred id is only a hint for server-side routes.
+  // The browser IndexedDB AppSettings projectId is the source of truth.
   const preferredId = await resolveProjectId(request.nextUrl.searchParams);
 
   const [projects, meta] = await Promise.all([
@@ -16,8 +18,14 @@ export async function GET(request: NextRequest) {
     getStoreMetaForRole(auth.accountId, auth.roleName, preferredId),
   ]);
 
-  const res = NextResponse.json({
+  return NextResponse.json({
     projects,
+    /** Configured default from account-hierarchy.json (not a hardcoded id). */
+    defaultProjectId: meta.defaultProjectId,
+    /**
+     * Server-resolved hint (cookie/query → else hierarchy default).
+     * Clients should prefer IndexedDB AppSettings over this value.
+     */
     activeProjectId: meta.activeProjectId,
     scope: {
       awsAccountId: auth.accountId,
@@ -25,16 +33,6 @@ export async function GET(request: NextRequest) {
     },
     source: "account-hierarchy",
   });
-
-  if (meta.activeProjectId) {
-    res.cookies.set("active-project-id", meta.activeProjectId, {
-      path: "/",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 365,
-    });
-  }
-
-  return res;
 }
 
 export async function POST() {

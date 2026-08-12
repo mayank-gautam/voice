@@ -1,8 +1,8 @@
 import {
+  getDefaultProjectIdFromHierarchy,
   getHierarchyProject,
   listHierarchyProjectsForAccount,
   resolveActiveHierarchyProjectId,
-  setActiveHierarchyProjectId,
 } from "@/lib/server/accountHierarchy";
 import type { HierarchyProjectPublic } from "@/lib/accountHierarchy";
 
@@ -67,13 +67,12 @@ export async function getStoreMetaForRole(
   accountId: string,
   roleName: string,
   preferredId?: string | null,
-): Promise<{ activeProjectId: string | null }> {
-  const activeProjectId = await resolveActiveHierarchyProjectId(
-    accountId,
-    roleName,
-    preferredId,
-  );
-  return { activeProjectId };
+): Promise<{ activeProjectId: string | null; defaultProjectId: string | null }> {
+  const [activeProjectId, defaultProjectId] = await Promise.all([
+    resolveActiveHierarchyProjectId(accountId, roleName, preferredId),
+    getDefaultProjectIdFromHierarchy(accountId),
+  ]);
+  return { activeProjectId, defaultProjectId };
 }
 
 export async function getProjectById(
@@ -104,9 +103,9 @@ export async function getDecryptedActiveProject(
 
 export async function setActiveProjectId(id: string): Promise<boolean> {
   const trimmed = id?.trim();
-  if (!trimmed) return false;
-  await setActiveHierarchyProjectId(trimmed);
-  return true;
+  // Active project persistence lives in IndexedDB AppSettings on the client.
+  // This only validates the id shape for cookie sync via /activate.
+  return Boolean(trimmed);
 }
 
 /** Manual create/update/delete disabled — account-hierarchy.json is the source of truth. */

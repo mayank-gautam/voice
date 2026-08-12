@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import {
+  getDefaultProjectIdForAccount,
   getProjectEntry,
   isAccountHierarchyFile,
   listProjectIdsForAccount,
@@ -17,12 +18,6 @@ import bundledDefault from "@/config/account-hierarchy.json";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const STORE_PATH = path.join(DATA_DIR, "account-hierarchy.json");
-
-const ACTIVE_META_PATH = path.join(DATA_DIR, "active-project.json");
-
-type ActiveMeta = {
-  activeProjectId: string | null;
-};
 
 /**
  * Load account-hierarchy.json.
@@ -59,13 +54,14 @@ export async function listHierarchyProjectsForAccount(
   roleName: string,
 ): Promise<HierarchyProjectPublic[]> {
   const hierarchy = await loadAccountHierarchy();
-  const key = resolveHierarchyAccountKey(hierarchy, accountId);
-  if (!key) return [];
+  if (!resolveHierarchyAccountKey(hierarchy, accountId)) return [];
 
   const projectIds = listProjectIdsForAccount(hierarchy, accountId);
-  return projectIds.map((projectId) =>
-    toPublicHierarchyProject(accountId, roleName, projectId, hierarchy[key][projectId]),
-  );
+  return projectIds.flatMap((projectId) => {
+    const entry = getProjectEntry(hierarchy, accountId, projectId);
+    if (!entry) return [];
+    return [toPublicHierarchyProject(accountId, roleName, projectId, entry)];
+  });
 }
 
 export async function getHierarchyProject(
@@ -82,6 +78,13 @@ export async function getHierarchyProject(
 export async function accountHasHierarchyProjects(accountId: string): Promise<boolean> {
   const hierarchy = await loadAccountHierarchy();
   return listProjectIdsForAccount(hierarchy, accountId).length > 0;
+}
+
+export async function getDefaultProjectIdFromHierarchy(
+  accountId: string | null | undefined,
+): Promise<string | null> {
+  const hierarchy = await loadAccountHierarchy();
+  return getDefaultProjectIdForAccount(hierarchy, accountId);
 }
 
 function toTwilioEnvConfig(twilio: HierarchyTwilioConfig | undefined): TwilioEnvConfig | null {
@@ -138,24 +141,11 @@ export async function requireTwilioConfigFromHierarchy(
   return config;
 }
 
-async function readActiveMeta(): Promise<ActiveMeta> {
-  try {
-    const raw = await fs.readFile(ACTIVE_META_PATH, "utf8");
-    const parsed = JSON.parse(raw) as ActiveMeta;
-    return { activeProjectId: parsed.activeProjectId ?? null };
-  } catch {
-    return { activeProjectId: null };
-  }
-}
-
-async function writeActiveMeta(meta: ActiveMeta): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(ACTIVE_META_PATH, JSON.stringify(meta, null, 2), "utf8");
-}
-
 /**
- * Pick the active project for this account: prefer persisted/cookie id if still
- * authorized; otherwise auto-select the sole/first hierarchy project.
+ * Resolve which project to use for a server request.
+ * Prefers an explicit/cookie project id when it exists in hierarchy;
+ * otherwise falls back to the configured default project.
+ * Does not persist anything — IndexedDB AppSettings is the client source of truth.
  */
 export async function resolveActiveHierarchyProjectId(
   accountId: string,
@@ -165,23 +155,15 @@ export async function resolveActiveHierarchyProjectId(
   const projects = await listHierarchyProjectsForAccount(accountId, roleName);
   if (projects.length === 0) return null;
 
-  const meta = await readActiveMeta();
-  const candidates = [preferredId, meta.activeProjectId].filter(Boolean) as string[];
-
-  for (const candidate of candidates) {
-    if (projects.some((project) => project.id === candidate)) {
-      if (meta.activeProjectId !== candidate) {
-        await writeActiveMeta({ activeProjectId: candidate });
-      }
-      return candidate;
-    }
+  const preferred = preferredId?.trim();
+  if (preferred && projects.some((project) => project.id === preferred)) {
+    return preferred;
   }
 
-  const autoId = projects[0].id;
-  await writeActiveMeta({ activeProjectId: autoId });
-  return autoId;
-}
+  const defaultId = await getDefaultProjectIdFromHierarchy(accountId);
+  if (defaultId && projects.some((project) => project.id === defaultId)) {
+    return defaultId;
+  }
 
-export async function setActiveHierarchyProjectId(projectId: string): Promise<void> {
-  await writeActiveMeta({ activeProjectId: projectId.trim() });
+  return null;
 }

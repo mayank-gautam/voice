@@ -8,6 +8,10 @@ import {
 
 type Ctx = { params: Promise<{ id: string }> };
 
+/**
+ * Sync the active-project cookie for server API routes.
+ * IndexedDB AppSettings remains the client source of truth for projectId.
+ */
 export async function POST(_request: NextRequest, ctx: Ctx) {
   const auth = await requireAuth();
   if (!isAuthOk(auth)) return auth.response;

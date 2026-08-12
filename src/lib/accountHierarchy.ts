@@ -2,7 +2,9 @@
  * account-hierarchy.json shape (source of truth):
  *
  * {
+ *   "defaultProject": "<projectId>",   // optional top-level fallback
  *   "<awsAccountId>": {
+ *     "defaultProject": "<projectId>", // preferred per-account default
  *     "<projectId>": {
  *       "twilio": { "accountSid": "...", "authToken": "..." },
  *       "tenantId": "..."
@@ -29,11 +31,32 @@ export type HierarchyProjectEntry = {
   [key: string]: unknown;
 };
 
-/** Raw file: accountId → projectId → config */
-export type AccountHierarchyFile = Record<
-  string,
-  Record<string, HierarchyProjectEntry>
->;
+/** Reserved non-project keys on an account object or at file root. */
+export const HIERARCHY_META_KEYS = new Set(["defaultProject", "defaultProjectId"]);
+
+/** Raw file: optional top-level default + accountId → projectId → config */
+export type AccountHierarchyFile = {
+  defaultProject?: string;
+  defaultProjectId?: string;
+  [accountId: string]: Record<string, HierarchyProjectEntry | string> | string | undefined;
+};
+
+function isHierarchyMetaKey(key: string): boolean {
+  return HIERARCHY_META_KEYS.has(key);
+}
+
+function readDefaultProjectField(
+  source: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!source) return null;
+  for (const key of HIERARCHY_META_KEYS) {
+    const value = source[key];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
 
 /** Public project (safe for the browser — never includes Twilio secrets). */
 export type HierarchyProjectPublic = {
@@ -64,11 +87,18 @@ export function resolveHierarchyAccountKey(
   const id = accountId?.trim();
   if (!id || !hierarchy || typeof hierarchy !== "object") return null;
 
-  if (Object.prototype.hasOwnProperty.call(hierarchy, id)) {
+  if (
+    Object.prototype.hasOwnProperty.call(hierarchy, id) &&
+    !isHierarchyMetaKey(id) &&
+    hierarchy[id] &&
+    typeof hierarchy[id] === "object" &&
+    !Array.isArray(hierarchy[id])
+  ) {
     return id;
   }
 
   const keys = Object.keys(hierarchy).filter((key) => {
+    if (isHierarchyMetaKey(key)) return false;
     const entry = hierarchy[key];
     return entry && typeof entry === "object" && !Array.isArray(entry);
   });
@@ -86,6 +116,10 @@ export function isAccountHierarchyFile(value: unknown): value is AccountHierarch
 
   for (const [accountKey, projects] of Object.entries(value as Record<string, unknown>)) {
     if (!accountKey.trim()) return false;
+    if (isHierarchyMetaKey(accountKey)) {
+      if (projects != null && typeof projects !== "string") return false;
+      continue;
+    }
     if (!projects || typeof projects !== "object" || Array.isArray(projects)) {
       return false;
     }
@@ -99,8 +133,12 @@ export function listProjectIdsForAccount(
 ): string[] {
   const key = resolveHierarchyAccountKey(hierarchy, accountId);
   if (!key) return [];
-  return Object.keys(hierarchy[key] ?? {}).filter((projectId) => {
-    const entry = hierarchy[key][projectId];
+  const account = hierarchy[key];
+  if (!account || typeof account !== "object" || Array.isArray(account)) return [];
+
+  return Object.keys(account).filter((projectId) => {
+    if (isHierarchyMetaKey(projectId)) return false;
+    const entry = account[projectId];
     return entry && typeof entry === "object" && !Array.isArray(entry);
   });
 }
@@ -112,10 +150,40 @@ export function getProjectEntry(
 ): HierarchyProjectEntry | null {
   const key = resolveHierarchyAccountKey(hierarchy, accountId);
   const pid = projectId?.trim();
-  if (!key || !pid) return null;
-  const entry = hierarchy[key]?.[pid];
+  if (!key || !pid || isHierarchyMetaKey(pid)) return null;
+  const account = hierarchy[key];
+  if (!account || typeof account !== "object" || Array.isArray(account)) return null;
+  const entry = account[pid];
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
-  return entry;
+  return entry as HierarchyProjectEntry;
+}
+
+/**
+ * Resolve the configured default project id for an AWS account.
+ * Prefers per-account `defaultProject`, then top-level file default.
+ * Returns null when missing or not a valid project under that account.
+ */
+export function getDefaultProjectIdForAccount(
+  hierarchy: AccountHierarchyFile,
+  accountId: string | null | undefined,
+): string | null {
+  const key = resolveHierarchyAccountKey(hierarchy, accountId);
+  if (key) {
+    const account = hierarchy[key];
+    if (account && typeof account === "object" && !Array.isArray(account)) {
+      const fromAccount = readDefaultProjectField(account as Record<string, unknown>);
+      if (fromAccount && getProjectEntry(hierarchy, accountId, fromAccount)) {
+        return fromAccount;
+      }
+    }
+  }
+
+  const fromRoot = readDefaultProjectField(hierarchy as Record<string, unknown>);
+  if (fromRoot && getProjectEntry(hierarchy, accountId, fromRoot)) {
+    return fromRoot;
+  }
+
+  return null;
 }
 
 /**

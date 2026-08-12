@@ -1,5 +1,6 @@
 {
   "11111": {
+    "defaultProject": "bcs",
     "bcs": {
       "twilio": {
         "accountSid": "ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
@@ -20,6 +21,7 @@
     }
   },
   "22222": {
+    "defaultProject": "bcs",
     "bcs": {
       "twilio": {
         "accountSid": "ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
