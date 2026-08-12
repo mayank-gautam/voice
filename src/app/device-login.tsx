@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  type ReactNode,
   useCallback,
   useEffect,
   useRef,
@@ -9,20 +8,6 @@ import {
 } from "react";
 
 import { useRouter } from "next/navigation";
-
-import {
-  ArrowLeft,
-  Building2,
-  CheckCircle2,
-  ExternalLink,
-  FolderKanban,
-  KeyRound,
-  Loader2,
-  LogOut,
-  RefreshCw,
-  ShieldCheck,
-  TriangleAlert,
-} from "lucide-react";
 
 import {
   areAwsCredentialsExpired,
@@ -36,6 +21,7 @@ import {
   saveAwsCredentials,
   setSelectedCredentials,
   setActiveProjectIdSetting,
+  getActiveProjectIdSetting,
 } from "@/lib/credentials-store";
 
 import { PROJECTS_CHANGED_EVENT } from "@/lib/projectConfig";
@@ -94,28 +80,8 @@ type AuthState =
       kind: "loading-accounts";
     }
   | {
-      kind: "select-account";
+      kind: "select-scope";
       accounts: AwsAccount[];
-    }
-  | {
-      kind: "loading-roles";
-      account: AwsAccount;
-    }
-  | {
-      kind: "select-role";
-      account: AwsAccount;
-      roles: AwsRole[];
-    }
-  | {
-      kind: "loading-projects";
-      account: AwsAccount;
-      role: AwsRole;
-    }
-  | {
-      kind: "select-project";
-      account: AwsAccount;
-      role: AwsRole;
-      projects: MappedProjectOption[];
     }
   | {
       kind: "creating-credentials";
@@ -241,13 +207,13 @@ type SessionApiResponse = {
 /* -------------------------------------------------------------------------- */
 
 const primaryButtonClass =
-  "inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:opacity-90 disabled:pointer-events-none disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--glow-primary)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50";
 
 const secondaryButtonClass =
-  "inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-background/50 px-5 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-lg border border-border bg-transparent px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50";
 
-const iconButtonClass =
-  "inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-background/50 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50";
+const selectClass =
+  "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm";
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -468,7 +434,7 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
       regionRef.current = normalizedRegion;
 
       setState({
-        kind: "select-account",
+        kind: "select-scope",
         accounts: sortedAccounts,
       });
 
@@ -478,46 +444,31 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
   );
 
   /* ------------------------------------------------------------------------ */
-  /* Fetch AWS roles                                                          */
+  /* Fetch AWS roles (returns list; does not change screen)                   */
   /* ------------------------------------------------------------------------ */
 
-  const fetchAwsRoles = useCallback(
+  const loadRolesForAccount = useCallback(
     async (
       account: AwsAccount,
       accessToken: string,
       region: string,
     ): Promise<AwsRole[]> => {
       const normalizedAccessToken = accessToken.trim();
-
       const normalizedRegion = region.trim() || "us-east-1";
 
       if (!normalizedAccessToken) {
         throw new Error("AWS SSO access token is unavailable.");
       }
 
-      selectedAccountRef.current = account;
-
-      selectedRoleRef.current = null;
-
-      setState({
-        kind: "loading-roles",
-        account,
-      });
-
       const response = await fetch("/api/aws/roles", {
         method: "POST",
-
         headers: {
           "Content-Type": "application/json",
         },
-
         cache: "no-store",
-
         body: JSON.stringify({
           accessToken: normalizedAccessToken,
-
           accountId: account.accountId,
-
           region: normalizedRegion,
         }),
       });
@@ -532,9 +483,7 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
 
         if (isTokenError(response.status, message)) {
           await clearAwsSsoToken();
-
           accessTokenRef.current = "";
-
           throw new Error(
             "Your AWS SSO session has expired. Please approve sign-in again.",
           );
@@ -544,20 +493,22 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
       }
 
       const roles = result.roles ?? [];
-
       if (roles.length === 0) {
         throw new Error(
           "No IAM Identity Center roles are assigned to this account.",
         );
       }
 
-      const catalogRes = await fetch("/api/mappings/catalog", { cache: "no-store" });
+      const catalogRes = await fetch("/api/mappings/catalog", {
+        cache: "no-store",
+      });
       const catalog = (await catalogRes.json().catch(() => ({}))) as {
         accounts?: Array<{ accountId: string; roles: string[] }>;
       };
       const mappedRoles = new Set(
-        (catalog.accounts || []).find((entry) => entry.accountId === account.accountId)
-          ?.roles || [],
+        (catalog.accounts || []).find(
+          (entry) => entry.accountId === account.accountId,
+        )?.roles || [],
       );
 
       const filteredRoles =
@@ -571,21 +522,51 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
         );
       }
 
-      const sortedRoles = [...filteredRoles].sort((first, second) =>
+      return [...filteredRoles].sort((first, second) =>
         first.roleName.localeCompare(second.roleName),
       );
+    },
+    [],
+  );
 
-      accessTokenRef.current = normalizedAccessToken;
-
-      regionRef.current = normalizedRegion;
-
-      setState({
-        kind: "select-role",
-        account,
-        roles: sortedRoles,
+  const loadProjectsForRole = useCallback(
+    async (
+      account: AwsAccount,
+      role: AwsRole,
+    ): Promise<MappedProjectOption[]> => {
+      const response = await fetch("/api/mappings/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          accountId: account.accountId,
+          roleName: role.roleName,
+        }),
       });
 
-      return sortedRoles;
+      const data = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        projects?: MappedProjectOption[];
+        error?: { message?: string };
+        message?: string;
+      };
+
+      if (!response.ok || data.success === false) {
+        throw new Error(
+          data?.error?.message ||
+            data?.message ||
+            "Unable to load mapped projects for this account and role.",
+        );
+      }
+
+      const projects = data.projects || [];
+      if (projects.length === 0) {
+        throw new Error(
+          "No projects are mapped for this AWS account and role in twilio-mappings.json.",
+        );
+      }
+
+      return projects;
     },
     [],
   );
@@ -967,66 +948,37 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
   }, [state.kind, fetchAwsAccounts]);
 
   /* ------------------------------------------------------------------------ */
-  /* Account selection                                                        */
+  /* Resolve SSO token for role/project loading                               */
   /* ------------------------------------------------------------------------ */
 
-  async function handleAccountSelect(account: AwsAccount): Promise<void> {
-    try {
-      let accessToken = accessTokenRef.current;
+  const resolveAccessToken = useCallback(async (): Promise<{
+    accessToken: string;
+    region: string;
+  } | null> => {
+    let accessToken = accessTokenRef.current;
+    let region = regionRef.current;
 
-      let region = regionRef.current;
-
-      if (!accessToken) {
-        const cachedSsoToken = await getValidAwsSsoToken();
-
-        if (!cachedSsoToken) {
-          await clearAwsSsoToken();
-
-          accessTokenRef.current = "";
-
-          setState({
-            kind: "idle",
-          });
-
-          return;
-        }
-
-        accessToken = cachedSsoToken.accessToken;
-
-        region = cachedSsoToken.region;
-
-        accessTokenRef.current = accessToken;
-
-        regionRef.current = region;
-      }
-
-      await fetchAwsRoles(account, accessToken, region);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unable to fetch AWS roles.";
-
-      console.error("Fetch AWS roles error:", message);
-
-      if (isTokenError(0, message)) {
+    if (!accessToken) {
+      const cachedSsoToken = await getValidAwsSsoToken();
+      if (!cachedSsoToken) {
         await clearAwsSsoToken();
-
         accessTokenRef.current = "";
-
-        setState({
-          kind: "idle",
-        });
-
-        return;
+        return null;
       }
-
-      setState({
-        kind: "error",
-        message,
-        retryType: "roles",
-        account,
-      });
+      accessToken = cachedSsoToken.accessToken;
+      region = cachedSsoToken.region;
+      accessTokenRef.current = accessToken;
+      regionRef.current = region;
     }
-  }
+
+    return { accessToken, region };
+  }, []);
+
+  const handleTokenExpired = useCallback(() => {
+    void clearAwsSsoToken();
+    accessTokenRef.current = "";
+    setState({ kind: "idle" });
+  }, []);
 
   /* ------------------------------------------------------------------------ */
   /* Role selection and credential creation                                   */
@@ -1083,82 +1035,8 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
     router.refresh();
   }
 
-  async function loadMappedProjects(
-    account: AwsAccount,
-    role: AwsRole,
-  ): Promise<void> {
-    selectedAccountRef.current = account;
-    selectedRoleRef.current = role;
-
-    setState({
-      kind: "loading-projects",
-      account,
-      role,
-    });
-
-    const response = await fetch("/api/mappings/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({
-        accountId: account.accountId,
-        roleName: role.roleName,
-      }),
-    });
-
-    const data = (await response.json().catch(() => ({}))) as {
-      success?: boolean;
-      projects?: MappedProjectOption[];
-      error?: { message?: string };
-      message?: string;
-    };
-
-    if (!response.ok || data.success === false) {
-      throw new Error(
-        data?.error?.message ||
-          data?.message ||
-          "Unable to load mapped projects for this account and role.",
-      );
-    }
-
-    const projects = data.projects || [];
-    if (projects.length === 0) {
-      throw new Error(
-        "No projects are mapped for this AWS account and role in twilio-mappings.json.",
-      );
-    }
-
-    setState({
-      kind: "select-project",
-      account,
-      role,
-      projects,
-    });
-  }
-
-  /** Role click → show mapped projects (do not authorize yet). */
-  async function handleRoleSelect(
-    account: AwsAccount,
-    role: AwsRole,
-  ): Promise<void> {
-    try {
-      await loadMappedProjects(account, role);
-    } catch (error) {
-      setState({
-        kind: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to load mapped projects.",
-        retryType: "projects",
-        account,
-        role,
-      });
-    }
-  }
-
-  /** Use Credentials → AWS role creds + active project in IndexedDB + enter app. */
-  async function handleUseCredentials(
+  /** Use This Account → AWS role creds + active project in IndexedDB + enter app. */
+  async function handleUseThisAccount(
     account: AwsAccount,
     role: AwsRole,
     projectId: string,
@@ -1348,51 +1226,6 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
   }
 
   /* ------------------------------------------------------------------------ */
-  /* Back to account selection                                                */
-  /* ------------------------------------------------------------------------ */
-
-  async function handleBackToAccounts(): Promise<void> {
-    try {
-      let accessToken = accessTokenRef.current;
-
-      let region = regionRef.current;
-
-      if (!accessToken) {
-        const cachedToken = await getValidAwsSsoToken();
-
-        if (!cachedToken) {
-          setState({
-            kind: "idle",
-          });
-
-          return;
-        }
-
-        accessToken = cachedToken.accessToken;
-
-        region = cachedToken.region;
-
-        accessTokenRef.current = accessToken;
-
-        regionRef.current = region;
-      }
-
-      await fetchAwsAccounts(accessToken, region);
-    } catch (error) {
-      setState({
-        kind: "error",
-
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to load AWS accounts.",
-
-        retryType: "accounts",
-      });
-    }
-  }
-
-  /* ------------------------------------------------------------------------ */
   /* Retry                                                                    */
   /* ------------------------------------------------------------------------ */
 
@@ -1403,53 +1236,34 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
 
     try {
       switch (state.retryType) {
-        case "accounts": {
+        case "accounts":
+        case "roles":
+        case "projects": {
           const cachedToken = await getValidAwsSsoToken();
-
           if (!cachedToken) {
             await startLogin();
             return;
           }
-
           await fetchAwsAccounts(cachedToken.accessToken, cachedToken.region);
-
-          return;
-        }
-
-        case "roles": {
-          if (state.account) {
-            await handleAccountSelect(state.account);
-
-            return;
-          }
-
-          await startLogin();
           return;
         }
 
         case "credentials": {
           if (state.account && state.role && state.projectId) {
-            await handleUseCredentials(state.account, state.role, state.projectId);
-
+            await handleUseThisAccount(
+              state.account,
+              state.role,
+              state.projectId,
+            );
             return;
           }
 
-          if (state.account && state.role) {
-            await handleRoleSelect(state.account, state.role);
+          const cachedToken = await getValidAwsSsoToken();
+          if (!cachedToken) {
+            await startLogin();
             return;
           }
-
-          await startLogin();
-          return;
-        }
-
-        case "projects": {
-          if (state.account && state.role) {
-            await handleRoleSelect(state.account, state.role);
-            return;
-          }
-
-          await startLogin();
+          await fetchAwsAccounts(cachedToken.accessToken, cachedToken.region);
           return;
         }
 
@@ -1460,12 +1274,10 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
     } catch (error) {
       setState({
         kind: "error",
-
         message:
           error instanceof Error
             ? error.message
             : "Unable to retry authentication.",
-
         retryType: "login",
       });
     }
@@ -1525,189 +1337,29 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
 
   if (state.kind === "checking-session") {
     return (
-      <LoadingSection
-        title="Restoring your session"
-        description="Checking cached AWS SSO access and temporary credentials."
-      />
+      <p className="text-center text-sm text-muted-foreground animate-pulse-glow">
+        Restoring your session…
+      </p>
     );
   }
 
   /* ------------------------------------------------------------------------ */
-  /* Account selection                                                        */
+  /* Account & Role selection (single screen)                                 */
   /* ------------------------------------------------------------------------ */
 
-  if (state.kind === "select-account") {
+  if (state.kind === "select-scope") {
     return (
-      <section className="animate-slide-up space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <SuccessBadge>AWS SSO session active</SuccessBadge>
-
-            <h2 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">
-              Choose an AWS account
-            </h2>
-
-            <p className="mt-2 text-sm text-muted-foreground">
-              {state.accounts.length} accessible AWS{" "}
-              {state.accounts.length === 1 ? "account was" : "accounts were"}{" "}
-              found.
-            </p>
-          </div>
-
-          <LogoutButton loading={isLoggingOut} onClick={() => void logout()} />
-        </div>
-
-        <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
-          {state.accounts.map((account) => (
-            <button
-              key={account.accountId}
-              type="button"
-              onClick={() => void handleAccountSelect(account)}
-              className="group w-full rounded-2xl border border-border/60 bg-background/40 p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:bg-primary/5"
-            >
-              <div className="flex items-center gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
-                  <Building2 className="h-6 w-6" />
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate font-semibold text-foreground">
-                    {account.accountName || account.accountId}
-                  </h3>
-
-                  <p className="mt-1 font-mono text-xs text-muted-foreground">
-                    {account.accountId}
-                  </p>
-
-                  {account.emailAddress && (
-                    <p className="mt-1 truncate text-xs text-muted-foreground">
-                      {account.emailAddress}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-
-        <p className="text-center text-xs text-muted-foreground">
-          Select an account to load its assigned IAM Identity Center roles.
-        </p>
-      </section>
-    );
-  }
-
-  /* ------------------------------------------------------------------------ */
-  /* Role selection                                                           */
-  /* ------------------------------------------------------------------------ */
-
-  if (state.kind === "select-role") {
-    return (
-      <section className="animate-slide-up space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <button
-              type="button"
-              onClick={() => void handleBackToAccounts()}
-              className={iconButtonClass}
-              aria-label="Back to accounts"
-              title="Back to accounts"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-
-            <div>
-              <SuccessBadge>Account selected</SuccessBadge>
-
-              <h2 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">
-                Choose an AWS role
-              </h2>
-
-              <p className="mt-2 text-sm text-muted-foreground">
-                {state.account.accountName || state.account.accountId}
-              </p>
-
-              <p className="mt-1 font-mono text-xs text-muted-foreground">
-                {state.account.accountId}
-              </p>
-            </div>
-          </div>
-
-          <LogoutButton loading={isLoggingOut} onClick={() => void logout()} />
-        </div>
-
-        <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
-          {state.roles.map((role) => (
-            <button
-              key={`${role.accountId}:${role.roleName}`}
-              type="button"
-              onClick={() => void handleRoleSelect(state.account, role)}
-              className="group w-full rounded-2xl border border-border/60 bg-background/40 p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:bg-primary/5"
-            >
-              <div className="flex items-center gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-500 transition-colors group-hover:bg-violet-500/15">
-                  <KeyRound className="h-6 w-6" />
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate font-semibold text-foreground">
-                    {role.roleName}
-                  </h3>
-
-                  <p className="mt-1 font-mono text-xs text-muted-foreground">
-                    {role.accountId}
-                  </p>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-
-        <p className="text-center text-xs text-muted-foreground">
-          Next: choose a project mapped for this account and role in
-          twilio-mappings.
-        </p>
-      </section>
-    );
-  }
-
-  /* ------------------------------------------------------------------------ */
-  /* Project selection                                                        */
-  /* ------------------------------------------------------------------------ */
-
-  if (state.kind === "select-project") {
-    return (
-      <ProjectPickerSection
-        account={state.account}
-        role={state.role}
-        projects={state.projects}
+      <AccountScopePicker
+        accounts={state.accounts}
         isLoggingOut={isLoggingOut}
         onLogout={() => void logout()}
-        onBack={() => {
-          void (async () => {
-            try {
-              let accessToken = accessTokenRef.current;
-              let region = regionRef.current;
-              if (!accessToken) {
-                const cached = await getValidAwsSsoToken();
-                if (!cached) {
-                  await handleBackToAccounts();
-                  return;
-                }
-                accessToken = cached.accessToken;
-                region = cached.region;
-                accessTokenRef.current = accessToken;
-                regionRef.current = region;
-              }
-              await fetchAwsRoles(state.account, accessToken, region);
-            } catch {
-              await handleAccountSelect(state.account);
-            }
-          })();
-        }}
-        onUseCredentials={(projectId) =>
-          void handleUseCredentials(state.account, state.role, projectId)
+        resolveAccessToken={resolveAccessToken}
+        loadRoles={loadRolesForAccount}
+        loadProjects={loadProjectsForRole}
+        onUseThisAccount={(account, role, projectId) =>
+          void handleUseThisAccount(account, role, projectId)
         }
+        onTokenExpired={handleTokenExpired}
       />
     );
   }
@@ -1718,39 +1370,17 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
 
   if (state.kind === "loading-accounts") {
     return (
-      <LoadingSection
-        title="Fetching your AWS accounts"
-        description="Loading all accounts assigned through AWS IAM Identity Center."
-      />
-    );
-  }
-
-  if (state.kind === "loading-roles") {
-    return (
-      <LoadingSection
-        title="Fetching assigned roles"
-        description={`Loading roles assigned for ${
-          state.account.accountName || state.account.accountId
-        }.`}
-      />
-    );
-  }
-
-  if (state.kind === "loading-projects") {
-    return (
-      <LoadingSection
-        title="Loading mapped projects"
-        description={`Reading projects for ${state.role.roleName} from twilio-mappings.`}
-      />
+      <p className="text-sm text-muted-foreground animate-pulse-glow">
+        Loading accounts…
+      </p>
     );
   }
 
   if (state.kind === "creating-credentials") {
     return (
-      <LoadingSection
-        title="Authorizing selected role"
-        description={`Generating temporary credentials for ${state.role.roleName} and activating project ${state.projectId}.`}
-      />
+      <p className="text-sm text-muted-foreground animate-pulse-glow">
+        Fetching credentials…
+      </p>
     );
   }
 
@@ -1760,61 +1390,39 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
 
   if (state.kind === "waiting") {
     return (
-      <section className="animate-slide-up space-y-6 text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
-          <ShieldCheck className="h-8 w-8" />
-        </div>
-
-        <div>
-          <h2 className="text-xl font-semibold text-foreground">
-            Approve this login in AWS
-          </h2>
-
-          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            A browser tab opened to AWS IAM Identity Center. Approve access,
-            then return here — you will not need to approve again until the SSO
-            session expires.
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-primary/20 bg-primary/5 px-6 py-5">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            Verification code
-          </p>
-
-          <p className="mt-3 font-mono text-3xl font-semibold tracking-[0.2em] text-primary">
-            {state.userCode}
-          </p>
-        </div>
-
+      <section className="glass-card animate-slide-up space-y-5 p-6 text-center">
+        <h2 className="text-lg font-semibold text-foreground">
+          Approve this login
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Enter this code in the AWS SSO page (opened in a new tab):
+        </p>
+        <p className="mono text-3xl font-semibold tracking-[0.2em] text-primary">
+          {state.userCode}
+        </p>
         {state.verificationUriComplete && (
           <a
+            className={cn(primaryButtonClass, "inline-flex")}
             href={state.verificationUriComplete}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
           >
             Open verification page
-            <ExternalLink className="h-4 w-4" />
           </a>
         )}
-
         {!state.verificationUriComplete && state.verificationUri && (
           <a
+            className={cn(primaryButtonClass, "inline-flex")}
             href={state.verificationUri}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
           >
             Open AWS SSO
-            <ExternalLink className="h-4 w-4" />
           </a>
         )}
-
-        <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin text-primary" />
-          Waiting for approval
-        </div>
+        <p className="animate-pulse-glow text-sm text-muted-foreground">
+          Waiting for approval…
+        </p>
       </section>
     );
   }
@@ -1825,51 +1433,29 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
 
   if (state.kind === "error") {
     return (
-      <section className="animate-slide-up space-y-5 text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-destructive/20 bg-destructive/10 text-destructive">
-          <TriangleAlert className="h-8 w-8" />
-        </div>
-
-        <div>
-          <h2 className="text-xl font-semibold text-foreground">
-            Unable to continue
-          </h2>
-
-          <p className="mt-2 text-sm leading-relaxed text-destructive">
-            {state.message}
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
+      <div className="flex flex-col items-center gap-4">
+        <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+          {state.message}
+        </p>
+        <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-center">
           <button
             type="button"
             className={secondaryButtonClass}
             onClick={() => void logout()}
             disabled={isLoggingOut}
           >
-            {isLoggingOut ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <LogOut className="h-4 w-4" />
-            )}
-            Cancel
+            {isLoggingOut ? "Signing out…" : "Sign out"}
           </button>
-
           <button
             type="button"
             className={primaryButtonClass}
             onClick={() => void handleRetry()}
             disabled={isStartingLogin}
           >
-            {isStartingLogin ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            Try again
+            {isStartingLogin ? "Starting…" : "Try again"}
           </button>
         </div>
-      </section>
+      </div>
     );
   }
 
@@ -1878,212 +1464,32 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
   /* ------------------------------------------------------------------------ */
 
   return (
-    <div className="flex flex-col items-center gap-5 text-center">
-      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
-        <ShieldCheck className="h-8 w-8" />
-      </div>
-
-      <div>
-        <h2 className="text-xl font-semibold text-foreground">
-          Sign in to continue
-        </h2>
-
-        <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-          Authenticate with AWS IAM Identity Center to view all accounts and
-          roles assigned to you.
+    <div className="flex flex-col items-center gap-4">
+      {initialSession?.accountId && (
+        <p className="text-center text-xs text-muted-foreground">
+          Previous account:{" "}
+          <span className="font-mono text-foreground">
+            {initialSession.accountId}
+          </span>
         </p>
-
-        {initialSession?.accountId && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            Previous account:{" "}
-            <span className="font-mono text-foreground">
-              {initialSession.accountId}
-            </span>
-          </p>
-        )}
-      </div>
-
+      )}
       <button
         type="button"
-        className={cn(primaryButtonClass, "w-full")}
+        className={cn(primaryButtonClass, "w-full sm:w-auto")}
         onClick={() => void startLogin()}
         disabled={isStartingLogin}
       >
-        {isStartingLogin ? (
-          <>
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Starting login
-          </>
-        ) : (
-          <>
-            <ShieldCheck className="h-4 w-4" />
-            Sign in with AWS SSO
-          </>
-        )}
+        {isStartingLogin ? "Starting…" : "Sign in with AWS"}
       </button>
     </div>
   );
 }
 
 /* -------------------------------------------------------------------------- */
-/* Helper Components                                                          */
+/* Account & Role Selection UI                                                */
 /* -------------------------------------------------------------------------- */
 
-function ProjectPickerSection({
-  account,
-  role,
-  projects,
-  isLoggingOut,
-  onLogout,
-  onBack,
-  onUseCredentials,
-}: {
-  account: AwsAccount;
-  role: AwsRole;
-  projects: MappedProjectOption[];
-  isLoggingOut: boolean;
-  onLogout: () => void;
-  onBack: () => void;
-  onUseCredentials: (projectId: string) => void;
-}) {
-  // No JSON defaultProject — user must explicitly choose before Use Credentials.
-  const [projectId, setProjectId] = useState("");
-
-  return (
-    <section className="animate-slide-up space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <button
-            type="button"
-            onClick={onBack}
-            className={iconButtonClass}
-            aria-label="Back to roles"
-            title="Back to roles"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-
-          <div>
-            <SuccessBadge>Role selected</SuccessBadge>
-
-            <h2 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">
-              Choose a project
-            </h2>
-
-            <p className="mt-2 text-sm text-muted-foreground">
-              {account.accountName || account.accountId}
-            </p>
-
-            <p className="mt-1 font-mono text-xs text-muted-foreground">
-              {role.roleName}
-            </p>
-          </div>
-        </div>
-
-        <LogoutButton loading={isLoggingOut} onClick={onLogout} />
-      </div>
-
-      <label className="block space-y-1.5">
-        <span className="text-xs uppercase tracking-wider text-muted-foreground">
-          Project
-        </span>
-        <select
-          className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm"
-          value={projectId}
-          onChange={(event) => setProjectId(event.target.value)}
-        >
-          <option value="" disabled>
-            Select a project…
-          </option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-              {project.hasTwilio ? "" : " (no Twilio)"}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <div className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
-        {projects.map((project) => {
-          const active = project.id === projectId;
-          return (
-            <button
-              key={project.id}
-              type="button"
-              onClick={() => setProjectId(project.id)}
-              className={cn(
-                "group w-full rounded-2xl border border-border/60 bg-background/40 p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:bg-primary/5",
-                active && "border-primary/50 bg-primary/5",
-              )}
-            >
-              <div className="flex items-center gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500">
-                  <FolderKanban className="h-6 w-6" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate font-semibold text-foreground">
-                    {project.name}
-                  </h3>
-                  <p className="mt-1 font-mono text-xs text-muted-foreground">
-                    {project.id}
-                  </p>
-                </div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
-      <button
-        type="button"
-        className={cn(primaryButtonClass, "w-full")}
-        disabled={!projectId}
-        onClick={() => onUseCredentials(projectId)}
-      >
-        Use Credentials
-      </button>
-
-      <p className="text-center text-xs text-muted-foreground">
-        Temporary AWS credentials will be generated and this project will be
-        saved as active in IndexedDB.
-      </p>
-    </section>
-  );
-}
-
-function SuccessBadge({ children }: { children: ReactNode }) {
-  return (
-    <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-500">
-      <CheckCircle2 className="h-3.5 w-3.5" />
-      {children}
-    </div>
-  );
-}
-
-function LoadingSection({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
-  return (
-    <section className="animate-slide-up py-8 text-center">
-      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
-        <Loader2 className="h-8 w-8 animate-spin" />
-      </div>
-
-      <h2 className="mt-5 text-xl font-semibold text-foreground">{title}</h2>
-
-      <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-        {description}
-      </p>
-    </section>
-  );
-}
-
-function LogoutButton({
+function SignOutButton({
   loading,
   onClick,
 }: {
@@ -2093,17 +1499,276 @@ function LogoutButton({
   return (
     <button
       type="button"
-      onClick={onClick}
+      className={secondaryButtonClass}
       disabled={loading}
-      className={iconButtonClass}
-      aria-label="Sign out"
-      title="Sign out"
+      onClick={onClick}
     >
-      {loading ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
-      ) : (
-        <LogOut className="h-4 w-4" />
-      )}
+      {loading ? "Signing out…" : "Sign out"}
     </button>
+  );
+}
+
+function AccountScopePicker({
+  accounts,
+  isLoggingOut,
+  onLogout,
+  resolveAccessToken,
+  loadRoles,
+  loadProjects,
+  onUseThisAccount,
+  onTokenExpired,
+}: {
+  accounts: AwsAccount[];
+  isLoggingOut: boolean;
+  onLogout: () => void;
+  resolveAccessToken: () => Promise<{ accessToken: string; region: string } | null>;
+  loadRoles: (
+    account: AwsAccount,
+    accessToken: string,
+    region: string,
+  ) => Promise<AwsRole[]>;
+  loadProjects: (
+    account: AwsAccount,
+    role: AwsRole,
+  ) => Promise<MappedProjectOption[]>;
+  onUseThisAccount: (
+    account: AwsAccount,
+    role: AwsRole,
+    projectId: string,
+  ) => void;
+  onTokenExpired: () => void;
+}) {
+  const [accountId, setAccountId] = useState(accounts[0]?.accountId || "");
+  const [roleName, setRoleName] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [roles, setRoles] = useState<AwsRole[]>([]);
+  const [projects, setProjects] = useState<MappedProjectOption[]>([]);
+  const [loadingRoles, setLoadingRoles] = useState(false);
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const selectedAccount = accounts.find((account) => account.accountId === accountId);
+  const selectedRole = roles.find((role) => role.roleName === roleName);
+
+  useEffect(() => {
+    if (!accounts.some((account) => account.accountId === accountId)) {
+      setAccountId(accounts[0]?.accountId || "");
+    }
+  }, [accounts, accountId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      const account = accounts.find((item) => item.accountId === accountId);
+      if (!account) {
+        setRoles([]);
+        setRoleName("");
+        setProjects([]);
+        setProjectId("");
+        return;
+      }
+
+      setLoadingRoles(true);
+      setError(null);
+      setRoles([]);
+      setRoleName("");
+      setProjects([]);
+      setProjectId("");
+
+      try {
+        const token = await resolveAccessToken();
+        if (!token) {
+          onTokenExpired();
+          return;
+        }
+
+        const nextRoles = await loadRoles(
+          account,
+          token.accessToken,
+          token.region,
+        );
+        if (cancelled) return;
+
+        setRoles(nextRoles);
+        setRoleName(nextRoles[0]?.roleName || "");
+      } catch (err) {
+        if (cancelled) return;
+        const message =
+          err instanceof Error ? err.message : "Unable to load roles.";
+        if (isTokenError(0, message)) {
+          onTokenExpired();
+          return;
+        }
+        setError(message);
+      } finally {
+        if (!cancelled) setLoadingRoles(false);
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, accounts, loadRoles, resolveAccessToken, onTokenExpired]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      const account = accounts.find((item) => item.accountId === accountId);
+      const role = roles.find((item) => item.roleName === roleName);
+      if (!account || !role) {
+        setProjects([]);
+        setProjectId("");
+        return;
+      }
+
+      setLoadingProjects(true);
+      setError(null);
+      setProjects([]);
+      setProjectId("");
+
+      try {
+        const nextProjects = await loadProjects(account, role);
+        if (cancelled) return;
+
+        setProjects(nextProjects);
+
+        const stored = await getActiveProjectIdSetting().catch(() => null);
+        const preferred =
+          stored && nextProjects.some((project) => project.id === stored)
+            ? stored
+            : "";
+        setProjectId(preferred);
+      } catch (err) {
+        if (cancelled) return;
+        setError(
+          err instanceof Error ? err.message : "Unable to load projects.",
+        );
+      } finally {
+        if (!cancelled) setLoadingProjects(false);
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, roleName, accounts, roles, loadProjects]);
+
+  const busy = loadingRoles || loadingProjects || pending;
+
+  return (
+    <section className="glass-card animate-slide-up flex flex-col space-y-4 p-6">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">
+            Choose AWS account & role
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Session is stored in IndexedDB. Switch accounts without a new device
+            code.
+          </p>
+        </div>
+        <SignOutButton loading={isLoggingOut} onClick={onLogout} />
+      </div>
+
+      <label className="block space-y-1.5">
+        <span className="text-xs uppercase tracking-wider text-muted-foreground">
+          Account
+        </span>
+        <select
+          className={selectClass}
+          value={accountId}
+          onChange={(event) => setAccountId(event.target.value)}
+          disabled={busy || accounts.length === 0}
+        >
+          {accounts.length === 0 && <option value="">No accounts found</option>}
+          {accounts.map((account) => (
+            <option key={account.accountId} value={account.accountId}>
+              {(account.accountName || "Account") + ` (${account.accountId})`}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="block space-y-1.5">
+        <span className="text-xs uppercase tracking-wider text-muted-foreground">
+          Role
+        </span>
+        <select
+          className={selectClass}
+          value={roleName}
+          onChange={(event) => setRoleName(event.target.value)}
+          disabled={busy || roles.length === 0}
+        >
+          {loadingRoles ? (
+            <option value="">Loading roles…</option>
+          ) : roles.length === 0 ? (
+            <option value="">No roles in this account</option>
+          ) : (
+            roles.map((role) => (
+              <option
+                key={`${role.accountId}:${role.roleName}`}
+                value={role.roleName}
+              >
+                {role.roleName}
+              </option>
+            ))
+          )}
+        </select>
+      </label>
+
+      <label className="block space-y-1.5">
+        <span className="text-xs uppercase tracking-wider text-muted-foreground">
+          Project
+        </span>
+        <select
+          className={selectClass}
+          value={projectId}
+          onChange={(event) => setProjectId(event.target.value)}
+          disabled={busy || projects.length === 0}
+        >
+          {loadingProjects ? (
+            <option value="">Loading projects…</option>
+          ) : (
+            <>
+              <option value="" disabled>
+                Select a project…
+              </option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                  {project.hasTwilio ? "" : " (no Twilio)"}
+                </option>
+              ))}
+            </>
+          )}
+        </select>
+      </label>
+
+      {error && (
+        <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </p>
+      )}
+
+      <button
+        type="button"
+        className={cn(primaryButtonClass, "w-full sm:w-auto")}
+        disabled={
+          busy || !selectedAccount || !selectedRole || !projectId.trim()
+        }
+        onClick={() => {
+          if (!selectedAccount || !selectedRole || !projectId.trim()) return;
+          setPending(true);
+          onUseThisAccount(selectedAccount, selectedRole, projectId.trim());
+        }}
+      >
+        {pending ? "Fetching credentials…" : "Use This Account"}
+      </button>
+    </section>
   );
 }

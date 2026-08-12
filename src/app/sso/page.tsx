@@ -123,21 +123,15 @@ export default async function SsoPage() {
                 </h2>
 
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Sign in using AWS IAM Identity Center
+                  Sign in with AWS, then choose your account and role
                 </p>
               </div>
 
               {/*
-               * DeviceLogin browser IndexedDB check karega:
-               *
-               * 1. Valid role credentials:
-               *    restore session and redirect dashboard.
-               *
-               * 2. Invalid role credentials + valid SSO token:
-               *    skip approval and fetch accounts.
-               *
-               * 3. Invalid SSO token:
-               *    show AWS approval action.
+               * DeviceLogin:
+               * 1. Sign in with AWS (reuse SSO token when valid)
+               * 2. Account & Role Selection → Use This Account
+               * 3. Switch Account returns here without re-approval when token is valid
                */}
               <DeviceLogin initialSession={initialSession} />
             </div>
