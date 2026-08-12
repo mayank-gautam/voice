@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { unsealData } from "iron-session";
+import { buildSsoHref, isPublicPath } from "@/lib/auth-return-to";
 
 const SESSION_COOKIE_NAME = "aws_sso_session";
 
@@ -10,17 +11,6 @@ type SessionData = {
   roleName?: string;
   expiration?: string;
 };
-
-const PUBLIC_PATHS = [
-  "/login",
-  "/sso",
-  "/api/auth/login",
-  "/api/auth/poll",
-  "/api/auth/refresh",
-  "/api/auth/session",
-  "/api/auth/logout",
-  "/api/aws",
-];
 
 async function isRequestAuthenticated(request: NextRequest): Promise<boolean> {
   const cookieValue = request.cookies.get(SESSION_COOKIE_NAME)?.value;
@@ -46,9 +36,7 @@ async function isRequestAuthenticated(request: NextRequest): Promise<boolean> {
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const isPublic = PUBLIC_PATHS.some(
-    (path) => pathname === path || pathname.startsWith(`${path}/`),
-  );
+  const isPublic = isPublicPath(pathname);
   const isApi = pathname.startsWith("/api/");
 
   if (isPublic) {
@@ -60,11 +48,16 @@ export async function proxy(request: NextRequest) {
   if (!isAuthed) {
     if (isApi) {
       return NextResponse.json(
-        { error: { code: "UNAUTHORIZED", message: "Unauthorized" } },
+        {
+          success: false,
+          error: { code: "UNAUTHORIZED", message: "Unauthorized" },
+        },
         { status: 401 },
       );
     }
-    return NextResponse.redirect(new URL("/sso", request.url));
+
+    const returnTo = `${pathname}${request.nextUrl.search || ""}`;
+    return NextResponse.redirect(new URL(buildSsoHref(returnTo), request.url));
   }
 
   return NextResponse.next();

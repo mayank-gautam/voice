@@ -5,6 +5,7 @@ import {
   isAccountHierarchyFile,
   listProjectIdsForAccount,
   resolveHierarchyAccountKey,
+  resolveTenantIdFromHierarchy,
   toPublicHierarchyProject,
   type AccountHierarchyFile,
   type HierarchyProjectPublic,
@@ -110,6 +111,18 @@ export async function getTwilioConfigFromHierarchy(
   const hierarchy = await loadAccountHierarchy();
   const entry = getProjectEntry(hierarchy, accountId, projectId);
   return toTwilioEnvConfig(entry?.twilio);
+}
+
+/**
+ * Resolve CloudWatch tenantId for the selected AWS account + project.
+ * Source: `.data/account-hierarchy.json` (never hardcoded).
+ */
+export async function getTenantIdFromHierarchy(
+  accountId: string | null | undefined,
+  projectId: string | null | undefined,
+): Promise<string | null> {
+  const hierarchy = await loadAccountHierarchy();
+  return resolveTenantIdFromHierarchy(hierarchy, accountId, projectId);
 }
 
 export async function requireTwilioConfigFromHierarchy(

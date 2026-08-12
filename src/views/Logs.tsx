@@ -35,7 +35,6 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { useProjects } from "@/lib/projectConfig";
-import { clearSelectedCredentials } from "@/lib/credentials-store";
 import { toast } from "sonner";
 import { inferServiceName } from "@/lib/serviceMapFromLogs";
 import { formatProjectNameDisplay } from "@/lib/formatProjectName";
@@ -44,6 +43,7 @@ import {
   LOGS_CHUNK_SIZE,
   type LogsApiEvent,
 } from "@/lib/logsApi";
+import { redirectToSsoForReauth } from "@/lib/reauth";
 
 type LogEvent = LogsApiEvent;
 
@@ -282,9 +282,8 @@ function LogsContent() {
         if ((e as { name?: string })?.name === "AbortError") return;
         const err = e as Error & { code?: string };
         if (err.code === "AUTH_REQUIRED") {
-          await clearSelectedCredentials().catch(() => undefined);
           toast.error(err.message);
-          router.replace("/sso");
+          await redirectToSsoForReauth({ logoutSession: false });
           return;
         }
         setEvents([]);
@@ -349,9 +348,8 @@ function LogsContent() {
       if (activeProjectRef.current !== projectIdAtStart) return;
       const err = e as Error & { code?: string };
       if (err.code === "AUTH_REQUIRED") {
-        await clearSelectedCredentials().catch(() => undefined);
         toast.error(err.message);
-        router.replace("/sso");
+        await redirectToSsoForReauth({ logoutSession: false });
         return;
       }
       setLoadMoreError(err.message || "Failed to load more logs");

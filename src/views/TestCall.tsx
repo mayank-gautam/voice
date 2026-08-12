@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useProjects } from "@/lib/projectConfig";
+import { apiFetch } from "@/lib/api-client";
 import {
   TestCallLoadTesting,
   type TestCallPayload,
@@ -120,9 +121,7 @@ const TestCall = () => {
     setNumbersError(null);
     try {
       const params = new URLSearchParams({ projectId: activeId, limit: "100" });
-      const res = await fetch(`/api/twilio/phone-numbers?${params}`, {
-        credentials: "include",
-      });
+      const res = await apiFetch(`/api/twilio/phone-numbers?${params}`);
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data?.error?.message || "Failed to list phone numbers");
@@ -287,9 +286,8 @@ const TestCall = () => {
       const params = new URLSearchParams();
       if (activeId) params.set("projectId", activeId);
 
-      const res = await fetch(`/api/test-calls?${params}`, {
+      const res = await apiFetch(`/api/test-calls?${params}`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to,

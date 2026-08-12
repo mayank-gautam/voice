@@ -21,6 +21,7 @@ import {
 import { Play, Square, Gauge, Activity, Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { download } from "@/lib/testSuite";
+import { apiFetch } from "@/lib/api-client";
 import Link from "next/link";
 
 export type TestCallPayload = {
@@ -75,9 +76,8 @@ async function createTestCall(
   const params = new URLSearchParams();
   if (projectId) params.set("projectId", projectId);
 
-  const res = await fetch(`/api/test-calls?${params}`, {
+  const res = await apiFetch(`/api/test-calls?${params}`, {
     method: "POST",
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });

@@ -2,6 +2,8 @@ import {
   buildAwsCredentialHeaders,
   getActiveCredentials,
 } from "@/lib/get-active-credentials";
+import { apiFetch } from "@/lib/api-client";
+import { redirectToSsoForReauth } from "@/lib/reauth";
 
 export const LOGS_CHUNK_SIZE = 200;
 
@@ -52,6 +54,17 @@ function buildLogsSearchParams(params: FetchLogsParams): URLSearchParams {
   return search;
 }
 
+async function requireAwsCredentials() {
+  const creds = await getActiveCredentials();
+  if (creds.ok === false) {
+    await redirectToSsoForReauth({ logoutSession: false });
+    const err = new Error(creds.message) as Error & { code?: string };
+    err.code = "AUTH_REQUIRED";
+    throw err;
+  }
+  return creds;
+}
+
 async function parseLogsResponse(
   res: Response,
   params: FetchLogsParams,
@@ -93,16 +106,9 @@ async function parseLogsResponse(
 export async function fetchLogsChunk(
   params: FetchLogsParams,
 ): Promise<FetchLogsResult> {
-  const creds = await getActiveCredentials();
-  if (creds.ok === false) {
-    const err = new Error(creds.message) as Error & { code?: string };
-    err.code = "AUTH_REQUIRED";
-    throw err;
-  }
-
+  const creds = await requireAwsCredentials();
   const search = buildLogsSearchParams(params);
-  const res = await fetch(`/api/logs?${search.toString()}`, {
-    credentials: "include",
+  const res = await apiFetch(`/api/logs?${search.toString()}`, {
     headers: buildAwsCredentialHeaders(creds.aws, creds.credentials.accountId),
     signal: params.signal,
   });
@@ -116,12 +122,7 @@ export async function fetchLogsChunk(
 export async function fetchCallLogsChunk(
   params: FetchCallLogsParams,
 ): Promise<FetchCallLogsResult> {
-  const creds = await getActiveCredentials();
-  if (creds.ok === false) {
-    const err = new Error(creds.message) as Error & { code?: string };
-    err.code = "AUTH_REQUIRED";
-    throw err;
-  }
+  const creds = await requireAwsCredentials();
 
   const callId = params.callId.trim();
   if (!callId) {
@@ -133,10 +134,9 @@ export async function fetchCallLogsChunk(
   const search = buildLogsSearchParams(params);
   search.delete("callId");
 
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/calls/${encodeURIComponent(callId)}/logs?${search.toString()}`,
     {
-      credentials: "include",
       headers: buildAwsCredentialHeaders(creds.aws, creds.credentials.accountId),
       signal: params.signal,
     },

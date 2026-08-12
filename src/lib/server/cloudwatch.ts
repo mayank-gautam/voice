@@ -6,6 +6,7 @@ import {
 } from "@aws-sdk/client-cloudwatch-logs";
 import type { ProjectConfig } from "./projectStore";
 import type { AwsCredentialHeaders } from "./api";
+import { getTenantIdFromHierarchy } from "@/lib/server/accountHierarchy";
 import {
   DEFAULT_CLOUDWATCH_INSIGHTS_FILTER,
   resolveCloudWatchInsightsFilter,
@@ -53,18 +54,6 @@ export const MAX_PAGE_SIZE = 500;
 /** CloudWatch Logs Insights hard max — used by "Load all". */
 export const ALL_LOGS_LIMIT = 10000;
 
-/**
- * Hardcoded project/account → tenant id fragment used in log group names.
- * Matches the Fastify ECS logs filter (extend later from account-hierarchy).
- */
-export const CLIENT_TENANT_IDS: Record<string, string> = {
-  bcs: "06edeab4",
-  lfs: "06edese3",
-  lfc: "06edese3",
-  chc: "066gvee4",
-  cgs: "066gvee4",
-};
-
 /** Log group name prefixes (Fastify used ecs / awslambda). */
 const LOG_GROUP_PREFIXES = ["/ecs", "/aws/lambda"];
 
@@ -110,15 +99,14 @@ async function mapPool<T, R>(
   return results;
 }
 
-function resolveTenantAccountKey(project: ProjectConfig): string {
-  return (project.id || project.name || "").trim().toLowerCase();
-}
-
-export function resolveTenantIdForProject(project: ProjectConfig): string | null {
-  const key = resolveTenantAccountKey(project);
-  if (CLIENT_TENANT_IDS[key]) return CLIENT_TENANT_IDS[key];
-  const byName = Object.keys(CLIENT_TENANT_IDS).find((k) => key.includes(k));
-  return byName ? CLIENT_TENANT_IDS[byName] : null;
+/**
+ * Resolve tenantId for CloudWatch filtering from account-hierarchy.json
+ * using the project's AWS account + project id (no hardcoded map).
+ */
+export async function resolveTenantIdForProject(
+  project: ProjectConfig,
+): Promise<string | null> {
+  return getTenantIdFromHierarchy(project.awsAccountId, project.id);
 }
 
 /** Derive a service label from a log group path (Fastify getServiceValue). */
@@ -437,7 +425,7 @@ export async function fetchLogs(
   );
   const offset = Math.max(0, Math.floor(opts?.offset ?? 0));
 
-  const tenantId = resolveTenantIdForProject(project);
+  const tenantId = await resolveTenantIdForProject(project);
   if (!tenantId) {
     return {
       configured: false,
@@ -447,7 +435,7 @@ export async function fetchLogs(
       nextCursor: null,
       pageSize,
       callSid,
-      message: `Invalid account/project "${project.id}". No tenant mapping for ECS/Lambda log filter.`,
+      message: `No tenantId configured in account-hierarchy for AWS account ${project.awsAccountId} / project "${project.id}". Add tenantId to that project entry to enable CloudWatch log filtering.`,
     };
   }
 

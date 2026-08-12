@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_CLOUDWATCH_INSIGHTS_FILTER } from "@/lib/cloudWatchInsightsQuery";
+import { apiFetch, type ApiClientError } from "@/lib/api-client";
 
 export interface ProjectConfig {
   id: string;
@@ -66,10 +67,6 @@ async function parseJson<T>(res: Response): Promise<T> {
   return data as T;
 }
 
-async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
-  return fetch(input, { credentials: "include", ...init });
-}
-
 export async function fetchProjects(): Promise<{
   projects: ProjectConfig[];
   activeProjectId: string | null;
@@ -82,7 +79,6 @@ export async function fetchProjects(): Promise<{
 
 export async function upsertProject(project: ProjectConfig): Promise<ProjectConfig> {
   const existing = await apiFetch(`/api/projects/${project.id}`);
-  if (existing.status === 401) throw new Error("Unauthorized");
 
   if (existing.ok) {
     const data = await parseJson<{ project: ProjectConfig }>(
@@ -152,6 +148,10 @@ export const useProjects = () => {
         localStorage.setItem(ACTIVE_KEY, data.activeProjectId);
       }
     } catch (e) {
+      // Shared apiFetch already started single-flight SSO redirect.
+      if ((e as ApiClientError)?.code === "AUTH_REQUIRED") {
+        return;
+      }
       setError(e instanceof Error ? e.message : "Failed to load projects");
       setProjects([]);
       setActiveId(null);

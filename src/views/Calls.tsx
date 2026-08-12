@@ -11,6 +11,7 @@ import { Phone, PhoneIncoming, PhoneOutgoing, AlertTriangle, RefreshCw, Loader2,
 import { useProjects } from "@/lib/projectConfig";
 import { useTimeRange } from "@/lib/timeRange";
 import type { CallEnvTag } from "@/lib/callEnvTag";
+import { apiFetch } from "@/lib/api-client";
 import { toast } from "sonner";
 
 type CallRow = {
@@ -71,9 +72,8 @@ const CallsContent = () => {
         try {
           const params = new URLSearchParams();
           if (projectId) params.set("projectId", projectId);
-          const res = await fetch(`/api/calls/env-tags?${params}`, {
+          const res = await apiFetch(`/api/calls/env-tags?${params}`, {
             method: "POST",
-            credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sids: batch }),
           });
@@ -117,7 +117,7 @@ const CallsContent = () => {
         if (bounds.after) params.set("startTimeAfter", bounds.after.toISOString());
         if (bounds.before) params.set("startTimeBefore", bounds.before.toISOString());
 
-        const res = await fetch(`/api/calls?${params}`, { credentials: "include" });
+        const res = await apiFetch(`/api/calls?${params}`);
         const data = await res.json();
         if (requestGen !== requestGenRef.current) return;
 
@@ -142,6 +142,7 @@ const CallsContent = () => {
         void enrichEnvTags(items, projectId, enrichGen);
       } catch (e) {
         if (requestGen !== requestGenRef.current) return;
+        if ((e as { code?: string })?.code === "AUTH_REQUIRED") return;
         setCalls([]);
         setSource("empty");
         const msg = e instanceof Error ? e.message : "Failed to load calls";

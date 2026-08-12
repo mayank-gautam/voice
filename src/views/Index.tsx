@@ -28,6 +28,7 @@ import {
 } from "@/lib/mockData";
 import { useProjects } from "@/lib/projectConfig";
 import { useTimeRange } from "@/lib/timeRange";
+import { apiFetch } from "@/lib/api-client";
 import { toast } from "sonner";
 
 type VolumePoint = { time: string; inbound: number; outbound: number };
@@ -121,7 +122,7 @@ const OverviewContent = () => {
       if (bounds.after) params.set("startTimeAfter", bounds.after.toISOString());
       if (bounds.before) params.set("startTimeBefore", bounds.before.toISOString());
 
-      const res = await fetch(`/api/calls/overview?${params}`, { credentials: "include" });
+      const res = await apiFetch(`/api/calls/overview?${params}`);
       const json = await res.json();
       if (requestGen !== requestGenRef.current) return;
 
@@ -140,6 +141,7 @@ const OverviewContent = () => {
       setSource("twilio");
     } catch (e) {
       if (requestGen !== requestGenRef.current) return;
+      if ((e as { code?: string })?.code === "AUTH_REQUIRED") return;
       setData(null);
       setSource("empty");
       const msg = e instanceof Error ? e.message : "Failed to load overview";

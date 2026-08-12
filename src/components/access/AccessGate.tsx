@@ -7,6 +7,9 @@ import { NoProjectAccess } from "@/components/access/NoProjectAccess";
 import { useProjects } from "@/lib/projectConfig";
 import { useGlobalLoading } from "@/lib/loading";
 import { getSelectedCredentials } from "@/lib/credentials-store";
+import { getActiveCredentials } from "@/lib/get-active-credentials";
+import { isPublicPath } from "@/lib/auth-return-to";
+import { isReauthInProgress, redirectToSsoForReauth } from "@/lib/reauth";
 
 /**
  * Routes that remain available when the user is authenticated but has zero
@@ -26,11 +29,10 @@ type AccessGateProps = {
 
 /**
  * Client-side authorization gate for dashboard pages.
- * Cookie/SSO auth is enforced by proxy.ts; this gate enforces project access
- * from account-hierarchy (no manual project setup).
+ * Cookie/SSO auth is enforced by proxy.ts; this gate validates AWS credential
+ * state and project access from account-hierarchy before rendering.
  *
- * Uses a local spinner only — does not start the global loader (avoids stacking
- * with RouteLoadingListener / page fetches).
+ * Uses a local spinner only when the global loader is idle (avoids stacking).
  */
 export function AccessGate({ children }: AccessGateProps) {
   const pathname = usePathname();
@@ -40,28 +42,74 @@ export function AccessGate({ children }: AccessGateProps) {
     accountId?: string;
     roleName?: string;
   }>({});
+  const [authChecking, setAuthChecking] = useState(true);
+  const [redirecting, setRedirecting] = useState(false);
 
   const optional = useMemo(() => isProjectOptionalPath(pathname), [pathname]);
   const hasProjects = projects.length > 0;
 
+  // Validate AWS credentials before rendering protected content.
   useEffect(() => {
     let cancelled = false;
+
     void (async () => {
+      if (isPublicPath(pathname)) {
+        if (!cancelled) {
+          setAuthChecking(false);
+          setRedirecting(false);
+        }
+        return;
+      }
+
+      if (isReauthInProgress()) {
+        if (!cancelled) {
+          setRedirecting(true);
+          setAuthChecking(false);
+        }
+        return;
+      }
+
+      setAuthChecking(true);
       try {
-        const selected = await getSelectedCredentials();
-        if (cancelled || !selected) return;
+        const creds = await getActiveCredentials();
+        if (cancelled) return;
+
+        if (!creds.ok) {
+          setRedirecting(true);
+          await redirectToSsoForReauth({
+            returnTo: `${pathname}${typeof window !== "undefined" ? window.location.search : ""}`,
+            logoutSession: false,
+          });
+          return;
+        }
+
         setSessionMeta({
-          accountId: selected.accountId,
-          roleName: selected.roleName,
+          accountId: creds.credentials.accountId,
+          roleName: creds.credentials.roleName,
         });
+        setRedirecting(false);
       } catch {
-        /* IndexedDB unavailable — UI still works from server session */
+        if (cancelled) return;
+        try {
+          const selected = await getSelectedCredentials();
+          if (!cancelled && selected) {
+            setSessionMeta({
+              accountId: selected.accountId,
+              roleName: selected.roleName,
+            });
+          }
+        } catch {
+          /* IndexedDB unavailable */
+        }
+      } finally {
+        if (!cancelled) setAuthChecking(false);
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [pathname]);
 
   // If URL/local active project is not in the authorized list, force a resync.
   useEffect(() => {
@@ -70,8 +118,14 @@ export function AccessGate({ children }: AccessGateProps) {
     void refresh();
   }, [loading, hasProjects, activeId, projects, refresh]);
 
-  if (loading) {
-    // Prefer the single GlobalLoader when a route transition already owns it.
+  // Reauth redirect in progress — prefer GlobalLoader; otherwise render nothing
+  // (hard navigation to /sso is imminent).
+  if (redirecting || isReauthInProgress()) {
+    if (globalLoading) return null;
+    return null;
+  }
+
+  if (authChecking || loading) {
     if (globalLoading) return null;
 
     return (
@@ -79,7 +133,7 @@ export function AccessGate({ children }: AccessGateProps) {
         <div className="flex flex-col items-center gap-3 text-center">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="text-sm text-muted-foreground">
-            Checking project access…
+            {authChecking ? "Validating session…" : "Checking project access…"}
           </p>
         </div>
       </div>

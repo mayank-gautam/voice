@@ -38,6 +38,8 @@ import {
 
 import { PROJECTS_CHANGED_EVENT } from "@/lib/projectConfig";
 
+import { sanitizeReturnTo } from "@/lib/auth-return-to";
+
 import { cn } from "@/lib/utils";
 
 /* -------------------------------------------------------------------------- */
@@ -995,7 +997,12 @@ export function DeviceLogin({ initialSession }: DeviceLoginProps) {
     selectedRoleRef.current = null;
     redirectStartedRef.current = true;
 
-    router.replace("/");
+    const returnTo =
+      typeof window !== "undefined"
+        ? sanitizeReturnTo(new URLSearchParams(window.location.search).get("returnTo"))
+        : null;
+
+    router.replace(returnTo || "/");
     router.refresh();
   }
 

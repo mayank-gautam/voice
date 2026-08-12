@@ -38,7 +38,8 @@ import {
   buildAwsCredentialHeaders,
   getActiveCredentials,
 } from "@/lib/get-active-credentials";
-import { clearSelectedCredentials } from "@/lib/credentials-store";
+import { redirectToSsoForReauth } from "@/lib/reauth";
+import { apiFetch } from "@/lib/api-client";
 import { inferServiceName } from "@/lib/serviceMapFromLogs";
 import { formatProjectNameDisplay } from "@/lib/formatProjectName";
 import { CallLogServiceMapModal } from "@/components/dashboard/call-analytics/CallLogServiceMapModal";
@@ -147,9 +148,8 @@ const CallLogs = () => {
 
       const creds = await getActiveCredentials();
       if (creds.ok === false) {
-        await clearSelectedCredentials().catch(() => undefined);
         toast.error(creds.message);
-        router.replace("/sso");
+        await redirectToSsoForReauth({ logoutSession: false });
         return;
       }
 
@@ -162,10 +162,9 @@ const CallLogs = () => {
       }
       if (activeId) params.set("projectId", activeId);
 
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/calls/${encodeURIComponent(callId)}/logs?${params.toString()}`,
         {
-          credentials: "include",
           headers: buildAwsCredentialHeaders(creds.aws, creds.credentials.accountId),
         },
       );
@@ -259,16 +258,14 @@ const CallLogs = () => {
 
       const creds = await getActiveCredentials();
       if (creds.ok === false) {
-        await clearSelectedCredentials().catch(() => undefined);
         toast.error(creds.message);
-        router.replace("/sso");
+        await redirectToSsoForReauth({ logoutSession: false });
         return;
       }
 
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/calls/${encodeURIComponent(callId)}/logs?${params.toString()}`,
         {
-          credentials: "include",
           headers: buildAwsCredentialHeaders(creds.aws, creds.credentials.accountId),
         },
       );

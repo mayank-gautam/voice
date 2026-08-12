@@ -24,6 +24,7 @@ import {
 import { toast } from "sonner";
 import { generateTranscript, traceSpans } from "@/lib/mockData";
 import { format } from "date-fns";
+import { apiFetch } from "@/lib/api-client";
 import { CallAnalyticsOverview } from "@/components/dashboard/call-analytics/CallAnalyticsOverview";
 import { CallAIPerformance } from "@/components/dashboard/call-analytics/CallAIPerformance";
 import {
@@ -103,7 +104,7 @@ const CallDetails = () => {
       setCallError(null);
       try {
         const qs = projectQs ? `?${projectQs}` : "";
-        const res = await fetch(`/api/calls/${encodeURIComponent(id)}${qs}`, { credentials: "include" });
+        const res = await apiFetch(`/api/calls/${encodeURIComponent(id)}${qs}`);
         const data = await res.json();
         if (!res.ok || !data.call) {
           throw new Error(data?.error?.message || "Call not found in Twilio");
@@ -111,6 +112,7 @@ const CallDetails = () => {
         if (!cancelled) setCall(data.call as CallRow);
       } catch (e) {
         if (!cancelled) {
+          if ((e as { code?: string })?.code === "AUTH_REQUIRED") return;
           setCall(null);
           setCallError(e instanceof Error ? e.message : "Failed to load call from Twilio");
         }
@@ -148,8 +150,8 @@ const CallDetails = () => {
       const qs = projectQs ? `?${projectQs}` : "";
       try {
         const [telRes, recRes] = await Promise.all([
-          fetch(`/api/calls/${encodeURIComponent(id)}/telephony${qs}`, { credentials: "include" }),
-          fetch(`/api/calls/${encodeURIComponent(id)}/recording${qs}`, { credentials: "include" }),
+          apiFetch(`/api/calls/${encodeURIComponent(id)}/telephony${qs}`),
+          apiFetch(`/api/calls/${encodeURIComponent(id)}/recording${qs}`),
         ]);
 
         let telErr: string | null = null;
@@ -198,7 +200,7 @@ const CallDetails = () => {
 
             // Fetch with credentials and use a blob URL — <audio src> alone can fail
             // silently when the proxy needs the session cookie.
-            const audioRes = await fetch(proxyUrl, { credentials: "include" });
+            const audioRes = await apiFetch(proxyUrl);
             if (!audioRes.ok) {
               throw new Error(`Recording proxy failed (${audioRes.status})`);
             }
@@ -217,6 +219,7 @@ const CallDetails = () => {
           }
         } catch (e) {
           if (!cancelled) {
+            if ((e as { code?: string })?.code === "AUTH_REQUIRED") return;
             recErr = e instanceof Error ? e.message : "Failed to load call recording";
             setAudioUrl(null);
           }
@@ -228,6 +231,7 @@ const CallDetails = () => {
         }
       } catch (e) {
         if (!cancelled) {
+          if ((e as { code?: string })?.code === "AUTH_REQUIRED") return;
           setTelephonyError(e instanceof Error ? e.message : "Failed to load telephony");
           setRecordingError(null);
           setTelephony(EMPTY_TELEPHONY);

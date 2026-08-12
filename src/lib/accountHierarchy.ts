@@ -4,13 +4,14 @@
  * {
  *   "<awsAccountId>": {
  *     "<projectId>": {
- *       "twilio": { "accountSid": "...", "authToken": "..." }
+ *       "twilio": { "accountSid": "...", "authToken": "..." },
+ *       "tenantId": "..."
  *     }
  *   }
  * }
  *
  * There is no role level in this file. AWS roles still come from SSO;
- * projects/Twilio are resolved by matching the authenticated AWS account ID.
+ * projects/Twilio/tenantId are resolved by matching the authenticated AWS account ID.
  */
 
 export type HierarchyTwilioConfig = {
@@ -23,6 +24,8 @@ export type HierarchyTwilioConfig = {
 
 export type HierarchyProjectEntry = {
   twilio?: HierarchyTwilioConfig;
+  /** CloudWatch log-group tenant fragment for this account/project. */
+  tenantId?: string;
   [key: string]: unknown;
 };
 
@@ -113,6 +116,34 @@ export function getProjectEntry(
   const entry = hierarchy[key]?.[pid];
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
   return entry;
+}
+
+/**
+ * Read tenantId from a hierarchy project entry.
+ * Accepts canonical `tenantId` and legacy misspelling `tenentId`.
+ */
+export function readHierarchyTenantId(
+  entry: HierarchyProjectEntry | null | undefined,
+): string | null {
+  if (!entry) return null;
+  const candidates = [entry.tenantId, entry.tenentId];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const trimmed = candidate.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+/**
+ * Resolve tenantId for the selected AWS account + project from hierarchy data.
+ */
+export function resolveTenantIdFromHierarchy(
+  hierarchy: AccountHierarchyFile,
+  accountId: string | null | undefined,
+  projectId: string | null | undefined,
+): string | null {
+  return readHierarchyTenantId(getProjectEntry(hierarchy, accountId, projectId));
 }
 
 function titleCaseProjectId(projectId: string): string {
