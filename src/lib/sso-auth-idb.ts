@@ -11,6 +11,8 @@ const DB_VERSION = 1;
 const STORE = "auth";
 const AUTH_KEY = "session";
 
+let dbPromise: Promise<IDBDatabase> | null = null;
+
 export type IdbRoleCredentials = {
   accountId: string;
   accountName?: string;
@@ -40,17 +42,38 @@ export function authRoleKey(accountId: string, roleName: string) {
 }
 
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onerror = () => reject(req.error ?? new Error("indexedDB open failed"));
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        db.createObjectStore(STORE);
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-  });
+  if (typeof indexedDB === "undefined") {
+    return Promise.reject(new Error("IndexedDB is unavailable."));
+  }
+
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onerror = () => {
+        dbPromise = null;
+        reject(req.error ?? new Error("indexedDB open failed"));
+      };
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(STORE)) {
+          db.createObjectStore(STORE);
+        }
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        db.onclose = () => {
+          dbPromise = null;
+        };
+        db.onversionchange = () => {
+          db.close();
+          dbPromise = null;
+        };
+        resolve(db);
+      };
+    });
+  }
+
+  return dbPromise;
 }
 
 async function withStore<T>(

@@ -5,6 +5,7 @@ import {
   useEffect,
   useRef,
   useState,
+  startTransition,
 } from "react";
 
 import { useRouter } from "next/navigation";
@@ -349,11 +350,7 @@ export function DeviceLogin({
     }
   }, [state.kind, onPhaseChange]);
 
-  useEffect(() => {
-    onLogoutReady?.(() => {
-      void logout();
-    }, isLoggingOut);
-  }, [onLogoutReady, isLoggingOut]);
+  /* onLogoutReady is wired after logout() is defined below. */
 
   /* ------------------------------------------------------------------------ */
   /* Create or restore server cookie session                                  */
@@ -1361,6 +1358,12 @@ export function DeviceLogin({
     }
   }
 
+  useEffect(() => {
+    onLogoutReady?.(() => {
+      void logout();
+    }, isLoggingOut);
+  }, [onLogoutReady, isLoggingOut]);
+
   /* ------------------------------------------------------------------------ */
   /* Checking cached session                                                  */
   /* ------------------------------------------------------------------------ */
@@ -1554,6 +1557,20 @@ export function DeviceLogin({
 
 /* -------------------------------------------------------------------------- */
 /* Account & Role Selection UI                                                */
+/* -------------------------------------------------------------------------- */
+
+function LiveExpiry({ value }: { value: string | undefined | null }) {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    // Refresh remaining-time labels infrequently to avoid UI lag.
+    const id = window.setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  return <>{formatExpiry(value)}</>;
+}
+
 function SignOutButton({
   loading,
   onClick,
@@ -1611,11 +1628,10 @@ function AccountScopePicker({
   const [activeCreds, setActiveCreds] = useState<StoredCredentials | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNote, setRefreshNote] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
+  const rolesRequestRef = useRef(0);
 
   void isLoggingOut;
   void onLogout;
-  void tick;
 
   const selectedAccount = accounts.find((account) => account.accountId === accountId);
   const selectedRole = roles.find((role) => role.roleName === roleName);
@@ -1626,22 +1642,19 @@ function AccountScopePicker({
       getSelectedCredentials(),
       getAwsSsoTokenSnapshot(),
     ]);
-    setCached(all);
-    setActiveCreds(selected);
-    setSsoToken(token);
-    if (selected) {
-      setSelectedCachedId(selected.id);
-    }
+    startTransition(() => {
+      setCached(all);
+      setActiveCreds(selected);
+      setSsoToken(token);
+      if (selected) {
+        setSelectedCachedId(selected.id);
+      }
+    });
   }, []);
 
   useEffect(() => {
     void reloadCredentialViews();
   }, [reloadCredentialViews]);
-
-  useEffect(() => {
-    const id = window.setInterval(() => setTick((value) => value + 1), 1000);
-    return () => window.clearInterval(id);
-  }, []);
 
   useEffect(() => {
     if (!accounts.some((account) => account.accountId === accountId)) {
@@ -1651,6 +1664,7 @@ function AccountScopePicker({
 
   useEffect(() => {
     let cancelled = false;
+    const requestId = ++rolesRequestRef.current;
 
     async function run() {
       const account = accounts.find((item) => item.accountId === accountId);
@@ -1662,8 +1676,6 @@ function AccountScopePicker({
 
       setLoadingRoles(true);
       setError(null);
-      setRoles([]);
-      setRoleName("");
 
       try {
         const token = await resolveAccessToken();
@@ -1677,16 +1689,18 @@ function AccountScopePicker({
           token.accessToken,
           token.region,
         );
-        if (cancelled) return;
+        if (cancelled || requestId !== rolesRequestRef.current) return;
 
-        setRoles(nextRoles);
-        setRoleName((prev) =>
-          nextRoles.some((role) => role.roleName === prev)
-            ? prev
-            : nextRoles[0]?.roleName || "",
-        );
+        startTransition(() => {
+          setRoles(nextRoles);
+          setRoleName((prev) =>
+            nextRoles.some((role) => role.roleName === prev)
+              ? prev
+              : nextRoles[0]?.roleName || "",
+          );
+        });
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || requestId !== rolesRequestRef.current) return;
         const message =
           err instanceof Error ? err.message : "Unable to load roles.";
         if (isTokenError(0, message)) {
@@ -1695,7 +1709,9 @@ function AccountScopePicker({
         }
         setError(message);
       } finally {
-        if (!cancelled) setLoadingRoles(false);
+        if (!cancelled && requestId === rolesRequestRef.current) {
+          setLoadingRoles(false);
+        }
       }
     }
 
@@ -1712,11 +1728,13 @@ function AccountScopePicker({
         item.accountId === selectedAccount.accountId &&
         item.roleName === selectedRole.roleName,
     );
-    if (match) {
-      setSelectedCachedId(match.id);
-      setActiveCreds(match);
+    if (!match) return;
+    if (selectedCachedId === match.id && activeCreds?.id === match.id) {
+      return;
     }
-  }, [selectedAccount, selectedRole, cached]);
+    setSelectedCachedId(match.id);
+    setActiveCreds(match);
+  }, [selectedAccount, selectedRole, cached, selectedCachedId, activeCreds?.id]);
 
   const useAccount = async (account: AwsAccount, role: AwsRole) => {
     if (pending) return;
@@ -1847,7 +1865,9 @@ function AccountScopePicker({
 
   const busy = loadingRoles || pending || refreshing || entering;
   const canContinue = Boolean(selectedAccount && selectedRole && !busy);
-  const canEnterApp = Boolean(activeCreds && selectedAccount && selectedRole && !busy);
+  const canEnterApp = Boolean(
+    activeCreds && selectedAccount && selectedRole && !busy,
+  );
   const noAccounts = accounts.length === 0;
   const safeError = error ? toUserFacingMessage(error) : null;
   const live = Boolean(
@@ -1857,7 +1877,7 @@ function AccountScopePicker({
   return (
     <div className="grid w-full items-start gap-6 lg:grid-cols-2 lg:gap-8">
       <div className="min-w-0 lg:sticky lg:top-8">
-        <section className="glass-card animate-slide-up flex h-full flex-col space-y-4 p-6">
+        <section className="glass-card flex h-full flex-col space-y-4 p-6">
           <div>
             <h2 className="text-lg font-semibold text-foreground">
               Choose AWS account & role
@@ -1869,9 +1889,7 @@ function AccountScopePicker({
           </div>
 
           {loadingRoles && roles.length === 0 && !noAccounts ? (
-            <p className="text-sm text-muted-foreground animate-pulse-glow">
-              Loading accounts…
-            </p>
+            <p className="text-sm text-muted-foreground">Loading accounts…</p>
           ) : noAccounts ? (
             <p className="text-sm text-muted-foreground">No accounts found</p>
           ) : (
@@ -1905,7 +1923,7 @@ function AccountScopePicker({
                   onChange={(event) => setRoleName(event.target.value)}
                   disabled={busy || loadingRoles || roles.length === 0}
                 >
-                  {loadingRoles ? (
+                  {loadingRoles && roles.length === 0 ? (
                     <option value="">Loading roles…</option>
                   ) : roles.length === 0 ? (
                     <option value="">No roles in this account</option>
@@ -1939,6 +1957,10 @@ function AccountScopePicker({
             </p>
           )}
 
+          {refreshNote && !safeError && (
+            <p className="text-sm text-muted-foreground">{refreshNote}</p>
+          )}
+
           {cached.length > 0 && (
             <div className="border-t border-border/60 pt-4">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1963,7 +1985,7 @@ function AccountScopePicker({
                           {item.accountName || item.accountId} / {item.roleName}
                         </span>
                         <span className="ml-3 shrink-0 text-xs text-muted-foreground">
-                          {formatExpiry(item.aws.expiration)}
+                          <LiveExpiry value={item.aws.expiration} />
                         </span>
                       </button>
                     </li>
@@ -1977,7 +1999,7 @@ function AccountScopePicker({
 
       <div className="min-w-0">
         {activeCreds ? (
-          <section className="glass-card metric-glow animate-slide-up flex h-full flex-col space-y-5 p-6">
+          <section className="glass-card metric-glow flex h-full flex-col space-y-5 p-6">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-medium uppercase tracking-wider text-primary">
@@ -2045,7 +2067,7 @@ function AccountScopePicker({
                   Role credentials expire
                 </dt>
                 <dd className="mt-1 font-medium">
-                  {formatExpiry(activeCreds.aws.expiration)}
+                  <LiveExpiry value={activeCreds.aws.expiration} />
                 </dd>
               </div>
               <div>
@@ -2053,14 +2075,10 @@ function AccountScopePicker({
                   SSO access token expires
                 </dt>
                 <dd className="mt-1 font-medium">
-                  {formatExpiry(ssoToken?.expiresAt)}
+                  <LiveExpiry value={ssoToken?.expiresAt} />
                 </dd>
               </div>
             </dl>
-
-            {refreshNote && (
-              <p className="text-sm text-muted-foreground">{refreshNote}</p>
-            )}
 
             <div className="mt-auto flex flex-wrap gap-3 border-t border-border/60 pt-5">
               <button
@@ -2082,7 +2100,7 @@ function AccountScopePicker({
             </div>
           </section>
         ) : (
-          <section className="glass-card animate-slide-up flex min-h-[280px] flex-col items-center justify-center gap-3 border-dashed p-8 text-center">
+          <section className="glass-card flex min-h-[280px] flex-col items-center justify-center gap-3 border-dashed p-8 text-center">
             <p className="text-sm font-medium text-foreground">
               No role selected yet
             </p>
