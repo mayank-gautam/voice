@@ -1049,215 +1049,204 @@ export function DeviceLogin({
     router.refresh();
   }
 
-  /** Use This Account → role creds + open mapped project from twilio-mappings. */
-  async function handleUseThisAccount(
+  /** Fetch AWS role credentials and store them in IndexedDB (stay on Home). */
+  async function storeRoleCredentials(
     account: AwsAccount,
     role: AwsRole,
   ): Promise<void> {
-    let activeProjectId = "";
+    selectedAccountRef.current = account;
+    selectedRoleRef.current = role;
 
+    const existing = await getCredentials(account.accountId, role.roleName);
+
+    if (
+      existing &&
+      !areAwsCredentialsExpired(existing.aws) &&
+      existing.aws.accessKeyId &&
+      existing.aws.secretAccessKey &&
+      existing.aws.sessionToken
+    ) {
+      await setSelectedCredentials(existing.id);
+      return;
+    }
+
+    let accessToken = accessTokenRef.current;
+    let region = regionRef.current;
+
+    if (!accessToken) {
+      const cachedSsoToken = await getValidAwsSsoToken();
+
+      if (!cachedSsoToken) {
+        throw new Error(
+          "Your sign-in session is no longer valid. Please sign in again.",
+        );
+      }
+
+      accessToken = cachedSsoToken.accessToken;
+      region = cachedSsoToken.region;
+      accessTokenRef.current = accessToken;
+      regionRef.current = region;
+    }
+
+    const response = await fetch("/api/aws/role-credentials", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify({
+        accessToken,
+        accountId: account.accountId,
+        roleName: role.roleName,
+        region,
+      }),
+    });
+
+    const result = await parseJsonResponse<RoleCredentialsApiResponse>(
+      response,
+      "Role credentials API",
+    );
+
+    if (!response.ok || !result.success) {
+      const message = getApiMessage(
+        result,
+        "Unable to generate account credentials.",
+      );
+
+      if (isTokenError(response.status, message)) {
+        await clearAwsSsoToken();
+        accessTokenRef.current = "";
+        throw new Error(
+          "Your sign-in session is no longer valid. Please sign in again.",
+        );
+      }
+
+      throw new Error(message);
+    }
+
+    const awsCredentials = result.aws;
+
+    if (!awsCredentials) {
+      throw new Error("Temporary AWS credentials were not returned.");
+    }
+
+    if (
+      !awsCredentials.accessKeyId?.trim() ||
+      !awsCredentials.secretAccessKey?.trim() ||
+      !awsCredentials.sessionToken?.trim() ||
+      !awsCredentials.expiration?.trim()
+    ) {
+      throw new Error("AWS credentials are incomplete. Please try again.");
+    }
+
+    const expirationTime = new Date(awsCredentials.expiration).getTime();
+
+    if (Number.isNaN(expirationTime) || expirationTime <= Date.now()) {
+      throw new Error("AWS credential expiration is invalid or expired.");
+    }
+
+    await saveAwsCredentials({
+      accountId: account.accountId,
+      accountName: account.accountName,
+      roleName: role.roleName,
+      accessKeyId: awsCredentials.accessKeyId,
+      secretAccessKey: awsCredentials.secretAccessKey,
+      sessionToken: awsCredentials.sessionToken,
+      expiration: awsCredentials.expiration,
+    });
+  }
+
+  /**
+   * Enter the app with the selected account/role:
+   * resolve mapped project, activate session, redirect.
+   */
+  async function handleEnterApp(
+    account: AwsAccount,
+    role: AwsRole,
+  ): Promise<void> {
     try {
       selectedAccountRef.current = account;
       selectedRoleRef.current = role;
 
-      setState({
-        kind: "creating-credentials",
-        account,
-        role,
-        projectId: "",
-      });
+      const stored = await getCredentials(account.accountId, role.roleName);
+      if (
+        !stored ||
+        areAwsCredentialsExpired(stored.aws) ||
+        !stored.aws.accessKeyId
+      ) {
+        await storeRoleCredentials(account, role);
+      } else {
+        await setSelectedCredentials(stored.id);
+      }
+
+      const credentials =
+        (await getCredentials(account.accountId, role.roleName)) ||
+        (await getSelectedCredentials());
+
+      if (!credentials) {
+        throw new Error("Unable to load stored credentials. Please try again.");
+      }
 
       const projects = await loadProjectsForRole(account, role);
       const mapped =
         projects.find((project) => project.hasTwilio) || projects[0] || null;
 
       if (!mapped || !mapped.hasTwilio) {
-        setState({
-          kind: "error",
-          message: "Telephone credentials not configured",
-          retryType: "projects",
-          account,
-          role,
-        });
-        return;
+        throw new Error("Telephone credentials not configured");
       }
-
-      activeProjectId = mapped.id;
 
       setState({
         kind: "creating-credentials",
         account,
         role,
-        projectId: activeProjectId,
+        projectId: mapped.id,
       });
 
-      const existing = await getCredentials(account.accountId, role.roleName);
-
-      if (
-        existing &&
-        !areAwsCredentialsExpired(existing.aws) &&
-        existing.aws.accessKeyId &&
-        existing.aws.secretAccessKey &&
-        existing.aws.sessionToken
-      ) {
-        await setSelectedCredentials(existing.id);
-
-        await completeRoleLogin(account, role, activeProjectId, {
-          accountId: existing.accountId,
-          accountName: existing.accountName || account.accountName,
-          roleName: existing.roleName,
-          expiration: existing.aws.expiration,
-        });
-
-        return;
-      }
-
-      let accessToken = accessTokenRef.current;
-      let region = regionRef.current;
-
-      if (!accessToken) {
-        const cachedSsoToken = await getValidAwsSsoToken();
-
-        if (!cachedSsoToken) {
-          throw new Error(
-            "AWS SSO session is unavailable. Please sign in again.",
-          );
-        }
-
-        accessToken = cachedSsoToken.accessToken;
-        region = cachedSsoToken.region;
-        accessTokenRef.current = accessToken;
-        regionRef.current = region;
-      }
-
-      const response = await fetch("/api/aws/role-credentials", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        cache: "no-store",
-        body: JSON.stringify({
-          accessToken,
-          accountId: account.accountId,
-          roleName: role.roleName,
-          region,
-        }),
-      });
-
-      const result = await parseJsonResponse<RoleCredentialsApiResponse>(
-        response,
-        "Role credentials API",
-      );
-
-      if (!response.ok || !result.success) {
-        const missingFields = result.missingFields?.length
-          ? ` Missing fields: ${result.missingFields.join(", ")}.`
-          : "";
-
-        const message = `${getApiMessage(
-          result,
-          "Unable to generate account credentials.",
-        )}${missingFields}`;
-
-        if (isTokenError(response.status, message)) {
-          await clearAwsSsoToken();
-          accessTokenRef.current = "";
-        }
-
-        throw new Error(message);
-      }
-
-      const awsCredentials = result.aws;
-
-      if (!awsCredentials) {
-        throw new Error("Temporary AWS credentials were not returned.");
-      }
-
-      const missingAwsFields: string[] = [];
-
-      if (!awsCredentials.accessKeyId?.trim()) {
-        missingAwsFields.push("accessKeyId");
-      }
-
-      if (!awsCredentials.secretAccessKey?.trim()) {
-        missingAwsFields.push("secretAccessKey");
-      }
-
-      if (!awsCredentials.sessionToken?.trim()) {
-        missingAwsFields.push("sessionToken");
-      }
-
-      if (!awsCredentials.expiration?.trim()) {
-        missingAwsFields.push("expiration");
-      }
-
-      if (missingAwsFields.length > 0) {
-        throw new Error(
-          `AWS credentials are incomplete. Missing fields: ${missingAwsFields.join(", ")}.`,
-        );
-      }
-
-      const expirationTime = new Date(awsCredentials.expiration).getTime();
-
-      if (Number.isNaN(expirationTime) || expirationTime <= Date.now()) {
-        throw new Error("AWS credential expiration is invalid or expired.");
-      }
-
-      const savedCredentials = await saveAwsCredentials({
-        accountId: account.accountId,
-        accountName: account.accountName,
-        roleName: role.roleName,
-        accessKeyId: awsCredentials.accessKeyId,
-        secretAccessKey: awsCredentials.secretAccessKey,
-        sessionToken: awsCredentials.sessionToken,
-        expiration: awsCredentials.expiration,
-      });
-
-      const selectedCredentials = await getSelectedCredentials();
-
-      if (
-        !selectedCredentials ||
-        selectedCredentials.id !== savedCredentials.id
-      ) {
-        throw new Error(
-          "Credentials were saved, but the selected account could not be verified.",
-        );
-      }
-
-      await completeRoleLogin(account, role, activeProjectId, {
-        accountId: savedCredentials.accountId,
-        accountName: savedCredentials.accountName,
-        roleName: savedCredentials.roleName,
-        expiration: savedCredentials.aws.expiration,
+      await completeRoleLogin(account, role, mapped.id, {
+        accountId: credentials.accountId,
+        accountName: credentials.accountName || account.accountName,
+        roleName: credentials.roleName,
+        expiration: credentials.aws.expiration,
       });
     } catch (error) {
       console.error(
-        "Create account credentials error:",
+        "Enter app error:",
         error instanceof Error ? error.message : "unknown error",
       );
+
+      const accounts =
+        state.kind === "select-scope"
+          ? state.accounts
+          : state.kind === "creating-credentials" || state.kind === "error"
+            ? []
+            : [];
 
       const rawMessage =
         error instanceof Error
           ? error.message
-          : "Unable to authorize the selected AWS role.";
+          : "Unable to open the application.";
 
-      const noMapping =
-        /no projects|no mapping|NO_MAPPING|telephone credentials/i.test(
-          rawMessage,
-        );
+      if (accounts.length > 0) {
+        setState({ kind: "select-scope", accounts });
+        throw error instanceof Error ? error : new Error(rawMessage);
+      }
 
       setState({
         kind: "error",
-        message: noMapping
+        message: /telephone credentials/i.test(rawMessage)
           ? "Telephone credentials not configured"
           : rawMessage,
-        retryType: "credentials",
+        retryType: /telephone credentials/i.test(rawMessage)
+          ? "projects"
+          : "credentials",
         account,
         role,
-        projectId: activeProjectId || undefined,
       });
+      throw error instanceof Error ? error : new Error(rawMessage);
     }
   }
+
+  /* Role credentials are stored via storeRoleCredentials; app entry via handleEnterApp. */
 
   /* ------------------------------------------------------------------------ */
   /* Retry                                                                    */
@@ -1284,7 +1273,18 @@ export function DeviceLogin({
         case "credentials":
         case "projects": {
           if (state.account && state.role) {
-            await handleUseThisAccount(state.account, state.role);
+            try {
+              await storeRoleCredentials(state.account, state.role);
+              const cachedToken = await getValidAwsSsoToken();
+              if (cachedToken) {
+                await fetchAwsAccounts(
+                  cachedToken.accessToken,
+                  cachedToken.region,
+                );
+              }
+            } catch {
+              await startLogin();
+            }
             return;
           }
 
@@ -1391,9 +1391,12 @@ export function DeviceLogin({
         onLogout={() => void logout()}
         resolveAccessToken={resolveAccessToken}
         loadRoles={loadRolesForAccount}
-        onUseThisAccount={(account, role) =>
-          void handleUseThisAccount(account, role)
-        }
+        onUseThisAccount={async (account, role) => {
+          await storeRoleCredentials(account, role);
+        }}
+        onEnterApp={async (account, role) => {
+          await handleEnterApp(account, role);
+        }}
         onTokenExpired={handleTokenExpired}
         onAccessTokenUpdated={(token) => {
           accessTokenRef.current = token.accessToken;
@@ -1577,6 +1580,7 @@ function AccountScopePicker({
   resolveAccessToken,
   loadRoles,
   onUseThisAccount,
+  onEnterApp,
   onTokenExpired,
   onAccessTokenUpdated,
 }: {
@@ -1589,7 +1593,8 @@ function AccountScopePicker({
     accessToken: string,
     region: string,
   ) => Promise<AwsRole[]>;
-  onUseThisAccount: (account: AwsAccount, role: AwsRole) => void;
+  onUseThisAccount: (account: AwsAccount, role: AwsRole) => Promise<void>;
+  onEnterApp: (account: AwsAccount, role: AwsRole) => Promise<void>;
   onTokenExpired: () => void;
   onAccessTokenUpdated: (token: AwsSsoToken) => void;
 }) {
@@ -1599,6 +1604,7 @@ function AccountScopePicker({
   const [loadingRoles, setLoadingRoles] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [entering, setEntering] = useState(false);
   const [cached, setCached] = useState<StoredCredentials[]>([]);
   const [selectedCachedId, setSelectedCachedId] = useState<string | null>(null);
   const [ssoToken, setSsoToken] = useState<AwsSsoToken | null>(null);
@@ -1712,17 +1718,47 @@ function AccountScopePicker({
     }
   }, [selectedAccount, selectedRole, cached]);
 
-  const useAccount = (account: AwsAccount, role: AwsRole) => {
+  const useAccount = async (account: AwsAccount, role: AwsRole) => {
     if (pending) return;
     setPending(true);
     setError(null);
     setRefreshNote(null);
-    onUseThisAccount(account, role);
+    try {
+      await onUseThisAccount(account, role);
+      await reloadCredentialViews();
+      setRefreshNote("Credentials stored in IndexedDB.");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unable to fetch credentials.";
+      if (/sign in again|session is no longer valid/i.test(message)) {
+        onTokenExpired();
+        return;
+      }
+      setError(toUserFacingMessage(message));
+    } finally {
+      setPending(false);
+    }
   };
 
   const continueToApp = () => {
     if (!selectedAccount || !selectedRole) return;
-    useAccount(selectedAccount, selectedRole);
+    void useAccount(selectedAccount, selectedRole);
+  };
+
+  const enterApp = async () => {
+    if (!selectedAccount || !selectedRole || entering) return;
+    setEntering(true);
+    setError(null);
+    try {
+      await onEnterApp(selectedAccount, selectedRole);
+    } catch (err) {
+      setError(
+        toUserFacingMessage(
+          err instanceof Error ? err.message : "Unable to open the app.",
+        ),
+      );
+      setEntering(false);
+    }
   };
 
   const selectCached = (item: StoredCredentials) => {
@@ -1732,7 +1768,7 @@ function AccountScopePicker({
     setRoleName(item.roleName);
     setError(null);
     setRefreshNote(null);
-    useAccount(
+    void useAccount(
       {
         accountId: item.accountId,
         accountName: item.accountName || item.accountId,
@@ -1809,8 +1845,9 @@ function AccountScopePicker({
     }
   };
 
-  const busy = loadingRoles || pending || refreshing;
+  const busy = loadingRoles || pending || refreshing || entering;
   const canContinue = Boolean(selectedAccount && selectedRole && !busy);
+  const canEnterApp = Boolean(activeCreds && selectedAccount && selectedRole && !busy);
   const noAccounts = accounts.length === 0;
   const safeError = error ? toUserFacingMessage(error) : null;
   const live = Boolean(
@@ -1826,8 +1863,8 @@ function AccountScopePicker({
               Choose AWS account & role
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Session is stored in IndexedDB. Switch accounts without a new
-              device code.
+              After SSO, pick an account and role. We fetch credentials and store
+              them in IndexedDB. Use Refresh token anytime.
             </p>
           </div>
 
@@ -2029,18 +2066,18 @@ function AccountScopePicker({
               <button
                 type="button"
                 className={cn(secondaryButtonClass, "px-5 py-2.5")}
-                disabled={!canContinue}
-                onClick={continueToApp}
+                disabled={!canEnterApp}
+                onClick={() => void enterApp()}
               >
-                Use credentials
+                {entering ? "Opening…" : "Use credentials"}
               </button>
               <button
                 type="button"
                 className={cn(primaryButtonClass)}
-                disabled={refreshing || !ssoToken?.refreshToken}
+                disabled={refreshing || !ssoToken?.refreshToken || busy}
                 onClick={() => void refreshTokens()}
               >
-                {refreshing ? "Refreshing…" : "Refresh now"}
+                {refreshing ? "Refreshing…" : "Refresh token"}
               </button>
             </div>
           </section>
