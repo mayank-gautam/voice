@@ -18,10 +18,10 @@ type SsoClientProps = {
 };
 
 const secondaryButtonClass =
-  "inline-flex items-center justify-center rounded-lg border border-border bg-transparent px-5 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-xl border border-border/80 bg-background/40 px-5 py-2.5 text-sm font-medium text-foreground shadow-sm transition-all hover:border-border hover:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
- * Shell UI adapted from the aws-sso ZIP Home / SSO pages.
+ * Shell UI for the sign-in / home experience.
  * Auth + credential logic stays inside DeviceLogin.
  */
 export function SsoClient({ initialSession }: SsoClientProps) {
@@ -47,8 +47,8 @@ export function SsoClient({ initialSession }: SsoClientProps) {
     <div
       className={
         signingIn && !checking
-          ? "mx-auto w-full max-w-xl space-y-6"
-          : "space-y-6"
+          ? "mx-auto w-full max-w-xl space-y-8"
+          : "space-y-8"
       }
     >
       {!checking && (
@@ -56,21 +56,21 @@ export function SsoClient({ initialSession }: SsoClientProps) {
           className={
             signingIn
               ? "space-y-3 text-center"
-              : "flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"
+              : "flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"
           }
         >
-          <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-[0.2em] text-primary">
-              AWS IAM Identity Center
+          <div className={signingIn ? "space-y-3" : "space-y-2"}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/90">
+              Voice
             </p>
             <h1
               className={
                 signingIn
                   ? "text-gradient text-4xl font-semibold tracking-tight sm:text-5xl"
-                  : "text-gradient text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl"
+                  : "text-gradient text-3xl font-semibold tracking-tight sm:text-4xl lg:text-[2.75rem]"
               }
             >
-              {authenticated ? "Home" : "SSO device login"}
+              {authenticated ? "Welcome back" : "Sign in"}
             </h1>
             <p
               className={
@@ -80,8 +80,8 @@ export function SsoClient({ initialSession }: SsoClientProps) {
               }
             >
               {authenticated
-                ? "SSO session and AWS role credentials are stored in voice-ai-db (auth) in this browser."
-                : "Approve a one-time code once. Tokens are saved in voice-ai-db so you can switch AWS accounts without signing in again."}
+                ? "Choose where you want to work. Your access stays on this device until you sign out."
+                : "Sign in once with your work account. You’ll approve a short code, then you can switch accounts anytime."}
             </p>
           </div>
           {authenticated ? (

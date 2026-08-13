@@ -227,10 +227,10 @@ type SessionApiResponse = {
 /* -------------------------------------------------------------------------- */
 
 const primaryButtonClass =
-  "inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--glow-primary)] transition-all duration-200 hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none";
+  "inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--glow-primary)] transition-all duration-200 hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none";
 
 const secondaryButtonClass =
-  "inline-flex items-center justify-center rounded-lg border border-border bg-transparent px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-xl border border-border/80 bg-background/40 px-4 py-2 text-sm font-medium text-foreground shadow-sm transition-all hover:border-border hover:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-50";
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -1416,17 +1416,17 @@ export function DeviceLogin({
 
   if (state.kind === "loading-accounts") {
     return (
-      <section className="glass-card animate-slide-up flex min-h-[16rem] flex-col items-center justify-center gap-3 p-8 text-center">
+      <section className="glass-card animate-slide-up flex min-h-[16rem] flex-col items-center justify-center gap-3 p-8 text-center sm:p-10">
         <Loader2
           className="h-7 w-7 animate-spin text-primary"
           aria-hidden
         />
         <div className="space-y-1">
-          <p className="text-sm font-medium text-foreground">
-            Loading accounts…
+          <p className="text-base font-medium text-foreground">
+            Finding your accounts…
           </p>
           <p className="text-sm text-muted-foreground">
-            Looking up the accounts available to you.
+            This usually takes just a moment.
           </p>
         </div>
       </section>
@@ -1435,17 +1435,17 @@ export function DeviceLogin({
 
   if (state.kind === "creating-credentials") {
     return (
-      <section className="glass-card animate-slide-up flex min-h-[16rem] flex-col items-center justify-center gap-3 p-8 text-center">
+      <section className="glass-card animate-slide-up flex min-h-[16rem] flex-col items-center justify-center gap-3 p-8 text-center sm:p-10">
         <Loader2
           className="h-7 w-7 animate-spin text-primary"
           aria-hidden
         />
         <div className="space-y-1">
-          <p className="text-sm font-medium text-foreground">
-            Preparing access…
+          <p className="text-base font-medium text-foreground">
+            Getting things ready…
           </p>
           <p className="text-sm text-muted-foreground">
-            Setting up access for the account and role you selected.
+            Setting up access for the account you chose.
           </p>
         </div>
       </section>
@@ -1458,38 +1458,40 @@ export function DeviceLogin({
 
   if (state.kind === "waiting") {
     return (
-      <section className="glass-card animate-slide-up space-y-5 p-6 text-center">
-        <h2 className="text-lg font-semibold text-foreground">
-          Approve this login
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Enter this code in the AWS SSO page (opened in a new tab):
-        </p>
-        <p className="mono text-3xl font-semibold tracking-[0.2em] text-primary">
+      <section className="glass-card animate-slide-up w-full max-w-md space-y-6 p-7 text-center sm:p-9">
+        <div className="space-y-2">
+          <h2 className="text-xl font-semibold tracking-tight text-foreground">
+            Approve this sign-in
+          </h2>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            Enter this code on the approval page (opened in a new tab):
+          </p>
+        </div>
+        <p className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-4 font-mono text-3xl font-semibold tracking-[0.28em] text-primary">
           {state.userCode}
         </p>
         {state.verificationUriComplete && (
           <a
-            className={cn(primaryButtonClass, "inline-flex")}
+            className={cn(primaryButtonClass, "inline-flex w-full sm:w-auto")}
             href={state.verificationUriComplete}
             target="_blank"
             rel="noopener noreferrer"
           >
-            Open verification page
+            Open approval page
           </a>
         )}
         {!state.verificationUriComplete && state.verificationUri && (
           <a
-            className={cn(primaryButtonClass, "inline-flex")}
+            className={cn(primaryButtonClass, "inline-flex w-full sm:w-auto")}
             href={state.verificationUri}
             target="_blank"
             rel="noopener noreferrer"
           >
-            Open AWS SSO
+            Open approval page
           </a>
         )}
         <p className="animate-pulse-glow text-sm text-muted-foreground">
-          Waiting for approval…
+          Waiting for you to approve…
         </p>
       </section>
     );
@@ -1535,23 +1537,33 @@ export function DeviceLogin({
   /* ------------------------------------------------------------------------ */
 
   return (
-    <div className="flex flex-col items-center gap-4">
+    <div className="flex w-full max-w-md flex-col items-center gap-5">
       {initialSession?.accountId && (
-        <p className="text-center text-xs text-muted-foreground">
-          Previous account:{" "}
-          <span className="font-mono text-foreground">
-            {initialSession.accountId}
+        <p className="text-center text-sm text-muted-foreground">
+          Last used:{" "}
+          <span className="font-medium text-foreground">
+            {initialSession.accountName || initialSession.accountId}
           </span>
+          {initialSession.roleName ? (
+            <span className="text-muted-foreground">
+              {" "}
+              · {initialSession.roleName}
+            </span>
+          ) : null}
         </p>
       )}
       <button
         type="button"
-        className={cn(primaryButtonClass, "w-full sm:w-auto")}
+        className={cn(primaryButtonClass, "w-full min-h-12 text-base sm:w-auto sm:px-10")}
         onClick={() => void startLogin()}
         disabled={isStartingLogin}
       >
-        {isStartingLogin ? "Starting…" : "Sign in with AWS SSO"}
+        {isStartingLogin ? "Starting…" : "Continue with your work account"}
       </button>
+      <p className="max-w-sm text-center text-xs leading-relaxed text-muted-foreground">
+        A new tab will open so you can approve access. You only need to do this
+        when your session expires.
+      </p>
     </div>
   );
 }
@@ -1745,10 +1757,10 @@ function AccountScopePicker({
     try {
       await onUseThisAccount(account, role);
       await reloadCredentialViews();
-      setRefreshNote("Credentials stored in voice-ai-db / auth.");
+      setRefreshNote("Access saved on this device.");
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Unable to fetch credentials.";
+        err instanceof Error ? err.message : "Unable to save access for this account.";
       if (/sign in again|session is no longer valid/i.test(message)) {
         onTokenExpired();
         return;
@@ -1872,13 +1884,11 @@ function AccountScopePicker({
       }
 
       await reloadCredentialViews();
-      setRefreshNote(
-        `Refreshed at ${new Date().toLocaleTimeString()} (voice-ai-db / auth updated)`,
-      );
+      setRefreshNote(`Access refreshed at ${new Date().toLocaleTimeString()}`);
     } catch (err) {
       setError(
         toUserFacingMessage(
-          err instanceof Error ? err.message : "Unable to refresh tokens.",
+          err instanceof Error ? err.message : "Unable to refresh access.",
         ),
       );
     } finally {
@@ -1900,31 +1910,33 @@ function AccountScopePicker({
   );
 
   return (
-    <div className="grid w-full items-start gap-6 lg:grid-cols-2 lg:gap-8">
-      <div className="min-w-0 lg:sticky lg:top-8">
-        <section className="glass-card flex h-full flex-col space-y-4 p-6">
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">
-              Choose AWS account & role
+    <div className="grid w-full items-stretch gap-6 lg:grid-cols-2 lg:gap-8">
+      <div className="min-w-0 lg:sticky lg:top-8 lg:self-start">
+        <section className="glass-card flex h-full flex-col space-y-5 p-6 sm:p-7">
+          <div className="space-y-1.5">
+            <h2 className="text-xl font-semibold tracking-tight text-foreground">
+              Choose an account
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              After SSO, pick an account and role. We fetch credentials and store
-              them in IndexedDB. Use Refresh token anytime.
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              Pick the account and permission you need, then save it. You can
+              refresh access anytime from here.
             </p>
           </div>
 
           {loadingRoles && roles.length === 0 && !noAccounts ? (
-            <p className="text-sm text-muted-foreground">Loading accounts…</p>
+            <p className="text-sm text-muted-foreground">Loading options…</p>
           ) : noAccounts ? (
-            <p className="text-sm text-muted-foreground">No accounts found</p>
+            <p className="text-sm text-muted-foreground">
+              No accounts are available for your sign-in.
+            </p>
           ) : (
             <div className="space-y-4">
               <label className="block space-y-1.5">
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                   Account
                 </span>
                 <select
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  className="w-full rounded-xl border border-border/80 bg-background/80 px-3.5 py-2.5 text-sm shadow-sm outline-none transition-colors focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
                   value={accountId}
                   onChange={(event) => setAccountId(event.target.value)}
                   disabled={busy || accounts.length === 0}
@@ -1939,19 +1951,19 @@ function AccountScopePicker({
               </label>
 
               <label className="block space-y-1.5">
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Role
+                <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  Permission
                 </span>
                 <select
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  className="w-full rounded-xl border border-border/80 bg-background/80 px-3.5 py-2.5 text-sm shadow-sm outline-none transition-colors focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
                   value={roleName}
                   onChange={(event) => setRoleName(event.target.value)}
                   disabled={busy || loadingRoles || roles.length === 0}
                 >
                   {loadingRoles && roles.length === 0 ? (
-                    <option value="">Loading roles…</option>
+                    <option value="">Loading…</option>
                   ) : roles.length === 0 ? (
-                    <option value="">No roles in this account</option>
+                    <option value="">Nothing available for this account</option>
                   ) : (
                     roles.map((role) => (
                       <option
@@ -1971,25 +1983,27 @@ function AccountScopePicker({
                 disabled={!canContinue}
                 onClick={continueToApp}
               >
-                {pending ? "Fetching credentials…" : "Use this account"}
+                {pending ? "Saving…" : "Save selection"}
               </button>
             </div>
           )}
 
           {safeError && (
-            <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-sm text-destructive">
               {safeError}
             </p>
           )}
 
           {refreshNote && !safeError && (
-            <p className="text-sm text-muted-foreground">{refreshNote}</p>
+            <p className="rounded-xl border border-primary/20 bg-primary/5 px-3.5 py-2.5 text-sm text-foreground/90">
+              {refreshNote}
+            </p>
           )}
 
           {cached.length > 0 && (
-            <div className="border-t border-border/60 pt-4">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Cached role credentials (voice-ai-db / auth)
+            <div className="border-t border-border/50 pt-5">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Saved on this device
               </h3>
               <ul className="mt-3 space-y-2">
                 {cached.map((item) => {
@@ -2000,14 +2014,19 @@ function AccountScopePicker({
                         type="button"
                         className={cn(
                           secondaryButtonClass,
-                          "w-full justify-between text-left",
-                          active && "border-primary/50 bg-primary/5",
+                          "w-full justify-between rounded-xl text-left",
+                          active &&
+                            "border-primary/40 bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/0.12)]",
                         )}
                         disabled={pending || refreshing}
                         onClick={() => selectCached(item)}
                       >
                         <span className="truncate">
-                          {item.accountName || item.accountId} / {item.roleName}
+                          {item.accountName || item.accountId}
+                          <span className="text-muted-foreground">
+                            {" "}
+                            · {item.roleName}
+                          </span>
                         </span>
                         <span className="ml-3 shrink-0 text-xs text-muted-foreground">
                           <LiveExpiry value={item.aws.expiration} />
@@ -2024,114 +2043,114 @@ function AccountScopePicker({
 
       <div className="min-w-0">
         {activeCreds ? (
-          <section className="glass-card metric-glow flex h-full flex-col space-y-5 p-6">
+          <section className="glass-card metric-glow flex h-full flex-col space-y-6 p-6 sm:p-7">
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-primary">
-                  Session
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
+                  Ready to go
                 </p>
-                <h2 className="mt-1 text-lg font-semibold text-foreground">
-                  Active AWS credentials
+                <h2 className="text-xl font-semibold tracking-tight text-foreground">
+                  Your access
                 </h2>
+                <p className="text-sm text-muted-foreground">
+                  Continue into the app with this account, or refresh if it is
+                  about to expire.
+                </p>
               </div>
               {live ? (
-                <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
-                  Live
+                <span className="shrink-0 rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
+                  Active
                 </span>
               ) : (
-                <span className="shrink-0 rounded-full border border-border bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-                  Idle
+                <span className="shrink-0 rounded-full border border-border bg-muted px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">
+                  Expired
                 </span>
               )}
             </div>
 
-            <dl className="grid gap-4 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <dt className="text-xs uppercase tracking-wider text-muted-foreground">
+            <dl className="grid gap-5 sm:grid-cols-2">
+              <div className="sm:col-span-2 rounded-2xl border border-border/60 bg-background/40 px-4 py-3.5">
+                <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                   Account
                 </dt>
-                <dd className="mt-1 font-medium">
+                <dd className="mt-1.5 text-base font-medium text-foreground">
                   {activeCreds.accountName
-                    ? `${activeCreds.accountName} (${activeCreds.accountId})`
+                    ? activeCreds.accountName
                     : activeCreds.accountId}
                 </dd>
+                {activeCreds.accountName ? (
+                  <dd className="mt-0.5 text-xs text-muted-foreground">
+                    {activeCreds.accountId}
+                  </dd>
+                ) : null}
               </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Role
+              <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3.5">
+                <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  Permission
                 </dt>
                 <dd
-                  className="mt-1 truncate font-medium"
+                  className="mt-1.5 truncate font-medium text-foreground"
                   title={activeCreds.roleName}
                 >
                   {activeCreds.roleName}
                 </dd>
               </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Refresh token
+              <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3.5">
+                <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  Sign-in can renew
                 </dt>
-                <dd className="mt-1 text-sm">
-                  {ssoToken?.refreshToken
-                    ? "Present in voice-ai-db"
-                    : "Missing"}
+                <dd className="mt-1.5 text-sm font-medium text-foreground">
+                  {ssoToken?.refreshToken ? "Yes" : "No — sign in again later"}
                 </dd>
               </div>
-              <div className="sm:col-span-2">
-                <dt className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Access key
+              <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3.5">
+                <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  Access expires
                 </dt>
-                <dd className="mt-1">
-                  <code className="mono break-all text-sm text-primary">
-                    {activeCreds.aws.accessKeyId}
-                  </code>
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Role credentials expire
-                </dt>
-                <dd className="mt-1 font-medium">
+                <dd className="mt-1.5 font-medium text-foreground">
                   <LiveExpiry value={activeCreds.aws.expiration} />
                 </dd>
               </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wider text-muted-foreground">
-                  SSO access token expires
+              <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3.5">
+                <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  Sign-in expires
                 </dt>
-                <dd className="mt-1 font-medium">
+                <dd className="mt-1.5 font-medium text-foreground">
                   <LiveExpiry value={ssoToken?.expiresAt} />
                 </dd>
               </div>
             </dl>
 
-            <div className="mt-auto flex flex-wrap gap-3 border-t border-border/60 pt-5">
+            <div className="mt-auto flex flex-wrap gap-3 border-t border-border/50 pt-5">
               <button
                 type="button"
-                className={cn(secondaryButtonClass, "px-5 py-2.5")}
+                className={cn(primaryButtonClass, "px-6 py-2.5")}
                 disabled={!canEnterApp}
                 onClick={() => void enterApp()}
               >
-                {entering ? "Opening…" : "Use credentials"}
+                {entering ? "Opening…" : "Continue to app"}
               </button>
               <button
                 type="button"
-                className={cn(primaryButtonClass)}
+                className={cn(secondaryButtonClass, "rounded-xl")}
                 disabled={refreshing || !ssoToken?.refreshToken || busy}
                 onClick={() => void refreshTokens()}
               >
-                {refreshing ? "Refreshing…" : "Refresh token"}
+                {refreshing ? "Refreshing…" : "Refresh access"}
               </button>
             </div>
           </section>
         ) : (
-          <section className="glass-card flex min-h-[280px] flex-col items-center justify-center gap-3 border-dashed p-8 text-center">
-            <p className="text-sm font-medium text-foreground">
-              No role selected yet
+          <section className="glass-card flex min-h-[280px] flex-col items-center justify-center gap-3 border-dashed border-border/70 p-8 text-center sm:p-10">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border/70 bg-muted/40 text-sm font-semibold text-muted-foreground">
+              1
+            </div>
+            <p className="text-base font-medium text-foreground">
+              Nothing selected yet
             </p>
-            <p className="max-w-xs text-sm text-muted-foreground">
-              Pick an account and role on the left, then credentials and expiry
-              details will show here.
+            <p className="max-w-xs text-sm leading-relaxed text-muted-foreground">
+              Choose an account and permission on the left, then save your
+              selection. Details will show up here.
             </p>
           </section>
         )}

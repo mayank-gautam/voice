@@ -45,10 +45,10 @@ export function formatDuration(ms: number): string {
 
 export function formatExpiry(isoOrUnknown: unknown): string {
   const iso = toIsoExpiry(isoOrUnknown);
-  if (!iso) return "Unknown";
+  if (!iso) return "Not available";
   const ms = Date.parse(iso);
   const remaining = ms - Date.now();
   const absolute = new Date(ms).toLocaleString();
-  if (remaining <= 0) return `Expired (${absolute})`;
-  return `${absolute} (${formatDuration(remaining)} left)`;
+  if (remaining <= 0) return `Expired · ${absolute}`;
+  return `${absolute} · ${formatDuration(remaining)} left`;
 }
