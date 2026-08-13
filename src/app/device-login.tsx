@@ -1726,7 +1726,7 @@ function AccountScopePicker({
     try {
       await onUseThisAccount(account, role);
       await reloadCredentialViews();
-      setRefreshNote("Credentials stored in IndexedDB.");
+      setRefreshNote("Credentials stored in voice-ai-db / auth.");
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Unable to fetch credentials.";
@@ -1832,7 +1832,7 @@ function AccountScopePicker({
 
       await reloadCredentialViews();
       setRefreshNote(
-        `Refreshed at ${new Date().toLocaleTimeString()} (IndexedDB updated)`,
+        `Refreshed at ${new Date().toLocaleTimeString()} (voice-ai-db / auth updated)`,
       );
     } catch (err) {
       setError(
@@ -1942,7 +1942,7 @@ function AccountScopePicker({
           {cached.length > 0 && (
             <div className="border-t border-border/60 pt-4">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Cached role credentials (IndexedDB)
+                Cached role credentials (voice-ai-db / auth)
               </h3>
               <ul className="mt-3 space-y-2">
                 {cached.map((item) => {
@@ -2026,7 +2026,7 @@ function AccountScopePicker({
                 </dt>
                 <dd className="mt-1 text-sm">
                   {ssoToken?.refreshToken
-                    ? "Present in IndexedDB"
+                    ? "Present in voice-ai-db"
                     : "Missing"}
                 </dd>
               </div>

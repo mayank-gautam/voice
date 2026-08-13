@@ -80,8 +80,8 @@ export function SsoClient({ initialSession }: SsoClientProps) {
               }
             >
               {authenticated
-                ? "SSO session and AWS role credentials are stored in IndexedDB in this browser."
-                : "Approve a one-time code once. Tokens are saved in IndexedDB so you can switch AWS accounts without signing in again."}
+                ? "SSO session and AWS role credentials are stored in voice-ai-db (auth) in this browser."
+                : "Approve a one-time code once. Tokens are saved in voice-ai-db so you can switch AWS accounts without signing in again."}
             </p>
           </div>
           {authenticated ? (
