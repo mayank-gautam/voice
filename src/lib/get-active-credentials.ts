@@ -3,7 +3,7 @@
 import {
   areAwsCredentialsExpired,
   clearSelectedCredentials,
-  getPreferredCredentials,
+  getSafeSelectedCredentials,
   type AwsCredentials,
   type StoredCredentials,
 } from "@/lib/credentials-store";
@@ -21,7 +21,7 @@ export type ActiveCredentialsResult =
     };
 
 export async function getActiveCredentials(): Promise<ActiveCredentialsResult> {
-  const credentials = await getPreferredCredentials();
+  const credentials = await getSafeSelectedCredentials();
 
   if (!credentials) {
     return {

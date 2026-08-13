@@ -1155,7 +1155,7 @@ export function DeviceLogin({
 
   /**
    * Enter the app with the selected account/role:
-   * resolve mapped project, activate session, redirect.
+   * mark that pair as `selected` in voice-ai-db, then resolve project and redirect.
    */
   async function handleEnterApp(
     account: AwsAccount,
@@ -1172,8 +1172,6 @@ export function DeviceLogin({
         !stored.aws.accessKeyId
       ) {
         await storeRoleCredentials(account, role);
-      } else {
-        await setSelectedCredentials(stored.id);
       }
 
       const credentials =
@@ -1183,6 +1181,9 @@ export function DeviceLogin({
       if (!credentials) {
         throw new Error("Unable to load stored credentials. Please try again.");
       }
+
+      // Always point auth.selected at the credentials we are about to use.
+      await setSelectedCredentials(credentials.id);
 
       const projects = await loadProjectsForRole(account, role);
       const mapped =
@@ -1764,11 +1765,27 @@ function AccountScopePicker({
   };
 
   const enterApp = async () => {
-    if (!selectedAccount || !selectedRole || entering) return;
+    // Use the credentials shown in the session panel (activeCreds) as source of truth.
+    if (!activeCreds || entering) return;
     setEntering(true);
     setError(null);
     try {
-      await onEnterApp(selectedAccount, selectedRole);
+      await setSelectedCredentials(activeCreds.id);
+      setSelectedCachedId(activeCreds.id);
+      setAccountId(activeCreds.accountId);
+      setRoleName(activeCreds.roleName);
+
+      await onEnterApp(
+        {
+          accountId: activeCreds.accountId,
+          accountName: activeCreds.accountName || activeCreds.accountId,
+          emailAddress: null,
+        },
+        {
+          accountId: activeCreds.accountId,
+          roleName: activeCreds.roleName,
+        },
+      );
     } catch (err) {
       setError(
         toUserFacingMessage(
@@ -1786,14 +1803,20 @@ function AccountScopePicker({
     setRoleName(item.roleName);
     setError(null);
     setRefreshNote(null);
-    void useAccount(
-      {
-        accountId: item.accountId,
-        accountName: item.accountName || item.accountId,
-        emailAddress: null,
-      },
-      { accountId: item.accountId, roleName: item.roleName },
-    );
+
+    // Point auth.selected at this cached pair immediately.
+    void setSelectedCredentials(item.id).catch(() => undefined);
+
+    if (areAwsCredentialsExpired(item.aws)) {
+      void useAccount(
+        {
+          accountId: item.accountId,
+          accountName: item.accountName || item.accountId,
+          emailAddress: null,
+        },
+        { accountId: item.accountId, roleName: item.roleName },
+      );
+    }
   };
 
   const refreshTokens = async () => {
@@ -1866,7 +1889,9 @@ function AccountScopePicker({
   const busy = loadingRoles || pending || refreshing || entering;
   const canContinue = Boolean(selectedAccount && selectedRole && !busy);
   const canEnterApp = Boolean(
-    activeCreds && selectedAccount && selectedRole && !busy,
+    activeCreds &&
+      !areAwsCredentialsExpired(activeCreds.aws) &&
+      !busy,
   );
   const noAccounts = accounts.length === 0;
   const safeError = error ? toUserFacingMessage(error) : null;
