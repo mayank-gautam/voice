@@ -1,16 +1,27 @@
 "use client";
 
-import { type DBSchema, type IDBPDatabase, openDB } from "idb";
+/**
+ * Client credential helpers.
+ * All IndexedDB persistence uses voice-ai-db (auth store) via sso-auth-idb.
+ * The legacy voice-ai-dashboard database is migrated once and deleted.
+ */
+
 import {
   authRoleKey,
+  clearIdbActiveProjectId,
   clearIdbAuth,
   clearIdbRoleCredentials,
+  clearIdbSettings,
+  closeIdb,
+  deleteLegacyCredentialsDatabase,
+  getIdbActiveProjectId,
   getSelectedRole,
   listCachedRoles,
   loadIdbAuth,
   saveIdbAuth,
   saveIdbRoleCredentials,
   saveIdbSsoSession,
+  setIdbActiveProjectId,
   setIdbSelectedRole,
   type IdbRoleCredentials,
 } from "@/lib/sso-auth-idb";
@@ -89,59 +100,6 @@ export type SaveTwilioCredentialsInput = {
   twilio: TwilioCredentials;
 };
 
-type AppSetting = {
-  key: string;
-  value: unknown;
-  updatedAt: string;
-};
-
-/* -------------------------------------------------------------------------- */
-/* IndexedDB Schema                                                           */
-/* -------------------------------------------------------------------------- */
-
-interface CredentialsDatabase extends DBSchema {
-  logCredentials: {
-    key: string;
-    value: StoredCredentials;
-
-    indexes: {
-      accountId: string;
-      roleName: string;
-      expiration: string;
-      updatedAt: string;
-    };
-  };
-
-  appSettings: {
-    key: string;
-    value: AppSetting;
-  };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Database Configuration                                                     */
-/* -------------------------------------------------------------------------- */
-
-const DATABASE_NAME = "voice-ai-dashboard";
-const DATABASE_VERSION = 3;
-
-const CREDENTIALS_STORE = "logCredentials";
-const SETTINGS_STORE = "appSettings";
-
-const SELECTED_CREDENTIALS_KEY = "selectedCredentialsId";
-
-const ACTIVE_PROJECT_ID_KEY = "activeProjectId";
-
-const AWS_SSO_TOKEN_KEY = "awsSsoToken";
-
-/** Map of AWS account ID → Twilio credentials (from server env, cached in IDB). */
-const TWILIO_BY_ACCOUNT_KEY = "twilioCredentialsByAccount";
-
-const LEGACY_SELECTED_KEYS = [
-  "selectedAwsCredentialsId",
-  "selectedAccountCredentialsId",
-] as const;
-
 export type TwilioAccountEntry = {
   twilioSid: string;
   twilioAuthToken: string;
@@ -149,10 +107,6 @@ export type TwilioAccountEntry = {
 };
 
 export type TwilioAccountMap = Record<string, TwilioAccountEntry>;
-
-let databasePromise: Promise<IDBPDatabase<CredentialsDatabase>> | null = null;
-
-let databaseConnection: IDBPDatabase<CredentialsDatabase> | null = null;
 
 /* -------------------------------------------------------------------------- */
 /* General Helpers                                                            */
@@ -166,34 +120,6 @@ function normalizeOptionalString(value?: string | null): string | undefined {
   const normalized = value?.trim();
 
   return normalized || undefined;
-}
-
-function getStringSettingValue(setting: AppSetting | undefined): string | null {
-  if (!setting || typeof setting.value !== "string") {
-    return null;
-  }
-
-  const value = setting.value.trim();
-
-  return value || null;
-}
-
-function isAwsSsoToken(value: unknown): value is AwsSsoToken {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-
-  const token = value as Partial<AwsSsoToken>;
-
-  return (
-    typeof token.accessToken === "string" &&
-    Boolean(token.accessToken.trim()) &&
-    typeof token.region === "string" &&
-    Boolean(token.region.trim()) &&
-    typeof token.expiresAt === "string" &&
-    Boolean(token.expiresAt.trim()) &&
-    typeof token.savedAt === "string"
-  );
 }
 
 export function createCredentialsId(
@@ -246,96 +172,6 @@ function authToAwsSsoToken(
     expiresAt: auth.accessTokenExpiresAt || new Date(0).toISOString(),
     savedAt: auth.savedAt,
   };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Database Connection                                                        */
-/* -------------------------------------------------------------------------- */
-
-async function getDatabase(): Promise<IDBPDatabase<CredentialsDatabase>> {
-  if (!isBrowser()) {
-    throw new Error("IndexedDB is available only in the browser.");
-  }
-
-  if (!databasePromise) {
-    databasePromise = openDB<CredentialsDatabase>(
-      DATABASE_NAME,
-      DATABASE_VERSION,
-      {
-        upgrade(database, oldVersion) {
-          /*
-           * Version 1 contained an old flat credential structure.
-           * Recreate only that old credential store during migration.
-           */
-          if (
-            oldVersion < 2 &&
-            database.objectStoreNames.contains(CREDENTIALS_STORE)
-          ) {
-            database.deleteObjectStore(CREDENTIALS_STORE);
-          }
-
-          if (!database.objectStoreNames.contains(CREDENTIALS_STORE)) {
-            const store = database.createObjectStore(CREDENTIALS_STORE, {
-              keyPath: "id",
-            });
-
-            store.createIndex("accountId", "accountId", {
-              unique: false,
-            });
-
-            store.createIndex("roleName", "roleName", {
-              unique: false,
-            });
-
-            store.createIndex("expiration", "aws.expiration", {
-              unique: false,
-            });
-
-            store.createIndex("updatedAt", "updatedAt", {
-              unique: false,
-            });
-          }
-
-          if (!database.objectStoreNames.contains(SETTINGS_STORE)) {
-            database.createObjectStore(SETTINGS_STORE, {
-              keyPath: "key",
-            });
-          }
-        },
-
-        blocked() {
-          console.warn(
-            "IndexedDB upgrade is blocked. Close other application tabs and refresh.",
-          );
-        },
-
-        blocking() {
-          databaseConnection?.close();
-
-          databaseConnection = null;
-          databasePromise = null;
-        },
-
-        terminated() {
-          databaseConnection = null;
-          databasePromise = null;
-        },
-      },
-    )
-      .then((database) => {
-        databaseConnection = database;
-
-        return database;
-      })
-      .catch((error) => {
-        databaseConnection = null;
-        databasePromise = null;
-
-        throw error;
-      });
-  }
-
-  return databasePromise;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -456,124 +292,31 @@ function normalizeTwilioCredentials(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Selected Setting Helpers                                                   */
-/* -------------------------------------------------------------------------- */
-
-async function putSelectedSetting(
-  database: IDBPDatabase<CredentialsDatabase>,
-  credentialsId: string,
-): Promise<void> {
-  const normalizedId = credentialsId.trim();
-
-  if (!normalizedId) {
-    throw new Error("Credential ID is required.");
-  }
-
-  const credentials = await database.get(CREDENTIALS_STORE, normalizedId);
-
-  if (!credentials) {
-    throw new Error("The credential record could not be found.");
-  }
-
-  const now = new Date().toISOString();
-
-  await database.put(SETTINGS_STORE, {
-    key: SELECTED_CREDENTIALS_KEY,
-
-    value: normalizedId,
-
-    updatedAt: now,
-  });
-
-  const savedSetting = await database.get(
-    SETTINGS_STORE,
-    SELECTED_CREDENTIALS_KEY,
-  );
-
-  if (getStringSettingValue(savedSetting) !== normalizedId) {
-    throw new Error("Selected credentials setting could not be saved.");
-  }
-}
-
-/* -------------------------------------------------------------------------- */
 /* Save Complete Credentials                                                  */
 /* -------------------------------------------------------------------------- */
 
 export async function saveCredentials(
   input: SaveCredentialsInput,
 ): Promise<StoredCredentials> {
-  const { accountId, roleName } = validateAccountAndRole(
-    input.accountId,
-    input.roleName,
-  );
-
-  validateAwsCredentials(input.aws);
-
-  if (input.twilio) {
-    validateTwilioCredentials(input.twilio);
-  }
-
-  const database = await getDatabase();
-
-  const id = createCredentialsId(accountId, roleName);
-
-  const existing = await database.get(CREDENTIALS_STORE, id);
-
-  const now = new Date().toISOString();
-
-  const storedCredentials: StoredCredentials = {
-    id,
-    accountId,
-
-    accountName:
-      normalizeOptionalString(input.accountName) || existing?.accountName,
-
-    roleName,
-
-    aws: normalizeAwsCredentials(input.aws),
-
-    twilio: input.twilio
-      ? normalizeTwilioCredentials(input.twilio)
-      : (existing?.twilio ?? null),
-
-    savedAt: existing?.savedAt ?? now,
-
-    updatedAt: now,
-  };
-
-  const transaction = database.transaction(
-    [CREDENTIALS_STORE, SETTINGS_STORE],
-    "readwrite",
-  );
-
-  await transaction.objectStore(CREDENTIALS_STORE).put(storedCredentials);
-
-  await transaction.objectStore(SETTINGS_STORE).put({
-    key: SELECTED_CREDENTIALS_KEY,
-
-    value: id,
-
-    updatedAt: now,
+  const stored = await saveAwsCredentials({
+    accountId: input.accountId,
+    accountName: input.accountName,
+    roleName: input.roleName,
+    accessKeyId: input.aws.accessKeyId,
+    secretAccessKey: input.aws.secretAccessKey,
+    sessionToken: input.aws.sessionToken,
+    expiration: input.aws.expiration,
   });
 
-  await transaction.done;
-
-  /*
-   * Verify that selectedCredentialsId
-   * was successfully saved in appSettings.
-   */
-  const selectedSetting = await database.get(
-    SETTINGS_STORE,
-    SELECTED_CREDENTIALS_KEY,
-  );
-
-  if (getStringSettingValue(selectedSetting) !== id) {
-    throw new Error(
-      "Credentials were saved, but the selected account setting was not saved.",
-    );
+  if (!input.twilio) {
+    return stored;
   }
 
-  return storedCredentials;
+  validateTwilioCredentials(input.twilio);
+  return {
+    ...stored,
+    twilio: normalizeTwilioCredentials(input.twilio),
+  };
 }
 
 export async function getSafeSelectedCredentials(): Promise<StoredCredentials | null> {
@@ -675,6 +418,7 @@ export async function getPreferredCredentials(): Promise<StoredCredentials | nul
     return null;
   }
 }
+
 /* -------------------------------------------------------------------------- */
 /* Save Only AWS Credentials                                                  */
 /* -------------------------------------------------------------------------- */
@@ -716,7 +460,7 @@ export async function saveAwsCredentials(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Save Only Twilio Credentials                                               */
+/* Twilio — resolved from server mappings; not persisted in IndexedDB         */
 /* -------------------------------------------------------------------------- */
 
 export async function saveTwilioCredentials(
@@ -729,11 +473,7 @@ export async function saveTwilioCredentials(
 
   validateTwilioCredentials(input.twilio);
 
-  const database = await getDatabase();
-
-  const id = createCredentialsId(accountId, roleName);
-
-  const existing = await database.get(CREDENTIALS_STORE, id);
+  const existing = await getCredentials(accountId, roleName);
 
   if (!existing) {
     throw new Error(
@@ -741,98 +481,36 @@ export async function saveTwilioCredentials(
     );
   }
 
-  const updatedCredentials: StoredCredentials = {
+  return {
     ...existing,
-
     twilio: normalizeTwilioCredentials(input.twilio),
-
     updatedAt: new Date().toISOString(),
   };
-
-  await database.put(CREDENTIALS_STORE, updatedCredentials);
-
-  await upsertTwilioForAccount(accountId, {
-    accountSid: input.twilio.accountSid,
-    authToken: input.twilio.authToken,
-    phoneNumber: input.twilio.phoneNumber,
-  });
-
-  return updatedCredentials;
-}
-
-function isTwilioAccountMap(value: unknown): value is TwilioAccountMap {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-
-  return Object.entries(value as Record<string, unknown>).every(
-    ([accountId, entry]) => {
-      if (!/^\d{12}$/.test(accountId)) return false;
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
-      const record = entry as Partial<TwilioAccountEntry>;
-      return (
-        typeof record.twilioSid === "string" &&
-        Boolean(record.twilioSid.trim()) &&
-        typeof record.twilioAuthToken === "string" &&
-        Boolean(record.twilioAuthToken.trim())
-      );
-    },
-  );
 }
 
 /**
- * Upsert Twilio credentials for an AWS account ID into the IndexedDB map:
- * `{ [accountId]: { twilioSid, twilioAuthToken, phoneNumber? } }`
+ * Twilio account map is no longer cached in IndexedDB.
+ * Twilio is resolved server-side from twilio-mappings.
  */
 export async function upsertTwilioForAccount(
-  accountId: string,
-  twilio: {
+  _accountId: string,
+  _twilio: {
     accountSid: string;
     authToken: string;
     phoneNumber?: string;
   },
 ): Promise<TwilioAccountMap> {
-  const normalizedAccountId = validateAccountId(accountId);
-  validateTwilioCredentials({
-    accountSid: twilio.accountSid,
-    authToken: twilio.authToken,
-    phoneNumber: twilio.phoneNumber,
-  });
-
-  const database = await getDatabase();
-  const existingSetting = await database.get(SETTINGS_STORE, TWILIO_BY_ACCOUNT_KEY);
-  const map: TwilioAccountMap = isTwilioAccountMap(existingSetting?.value)
-    ? { ...existingSetting.value }
-    : {};
-
-  map[normalizedAccountId] = {
-    twilioSid: twilio.accountSid.trim(),
-    twilioAuthToken: twilio.authToken.trim(),
-    phoneNumber: normalizeOptionalString(twilio.phoneNumber),
-  };
-
-  const now = new Date().toISOString();
-  await database.put(SETTINGS_STORE, {
-    key: TWILIO_BY_ACCOUNT_KEY,
-    value: map,
-    updatedAt: now,
-  });
-
-  return map;
+  return {};
 }
 
 export async function getTwilioAccountMap(): Promise<TwilioAccountMap> {
-  const database = await getDatabase();
-  const setting = await database.get(SETTINGS_STORE, TWILIO_BY_ACCOUNT_KEY);
-  return isTwilioAccountMap(setting?.value) ? setting.value : {};
+  return {};
 }
 
 export async function getTwilioForAccount(
-  accountId: string,
+  _accountId: string,
 ): Promise<TwilioAccountEntry | null> {
-  const normalizedAccountId = validateAccountId(accountId);
-  const map = await getTwilioAccountMap();
-  return map[normalizedAccountId] ?? null;
+  return null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1114,50 +792,29 @@ export async function clearSelectedCredentials(): Promise<void> {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Active project (AppSettings)                                               */
+/* Active project — voice-ai-db / auth (settings key)                         */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Read the active projectId from IndexedDB appSettings.
+ * Read the active projectId from IndexedDB (voice-ai-db).
  * This is the client source of truth for the current project.
  */
 export async function getActiveProjectIdSetting(): Promise<string | null> {
   if (!isBrowser()) return null;
-
-  const database = await getDatabase();
-  const setting = await database.get(SETTINGS_STORE, ACTIVE_PROJECT_ID_KEY);
-  return getStringSettingValue(setting);
+  return getIdbActiveProjectId();
 }
 
 /**
- * Persist the active projectId in IndexedDB appSettings.
+ * Persist the active projectId in IndexedDB (voice-ai-db).
  */
 export async function setActiveProjectIdSetting(projectId: string): Promise<void> {
-  const normalized = projectId.trim();
-  if (!normalized) {
-    throw new Error("Project ID is required.");
-  }
   if (!isBrowser()) return;
-
-  const database = await getDatabase();
-  const now = new Date().toISOString();
-
-  await database.put(SETTINGS_STORE, {
-    key: ACTIVE_PROJECT_ID_KEY,
-    value: normalized,
-    updatedAt: now,
-  });
-
-  const saved = await database.get(SETTINGS_STORE, ACTIVE_PROJECT_ID_KEY);
-  if (getStringSettingValue(saved) !== normalized) {
-    throw new Error("Active project setting could not be saved.");
-  }
+  await setIdbActiveProjectId(projectId);
 }
 
 export async function clearActiveProjectIdSetting(): Promise<void> {
   if (!isBrowser()) return;
-  const database = await getDatabase();
-  await database.delete(SETTINGS_STORE, ACTIVE_PROJECT_ID_KEY);
+  await clearIdbActiveProjectId();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1253,8 +910,7 @@ export async function deleteCredentialsByAccountId(
 /* -------------------------------------------------------------------------- */
 
 /*
- * Clears the temporary AWS role credentials,
- * Twilio credentials, and selected-account setting.
+ * Clears the temporary AWS role credentials and selected-account setting.
  *
  * The cached AWS SSO token remains available.
  * This allows users to fetch accounts and roles again
@@ -1262,21 +918,6 @@ export async function deleteCredentialsByAccountId(
  */
 export async function clearStoredAccountCredentials(): Promise<void> {
   await clearIdbRoleCredentials();
-
-  // Keep app settings (active project etc.) but clear legacy Twilio map cache.
-  try {
-    const database = await getDatabase();
-    const settingsStore = database
-      .transaction(SETTINGS_STORE, "readwrite")
-      .objectStore(SETTINGS_STORE);
-    await settingsStore.delete(SELECTED_CREDENTIALS_KEY);
-    await settingsStore.delete(TWILIO_BY_ACCOUNT_KEY);
-    for (const legacyKey of LEGACY_SELECTED_KEYS) {
-      await settingsStore.delete(legacyKey);
-    }
-  } catch {
-    /* ignore */
-  }
 }
 
 /*
@@ -1287,19 +928,8 @@ export async function clearStoredAccountCredentials(): Promise<void> {
  */
 export async function clearAllCredentials(): Promise<void> {
   await clearIdbAuth();
-
-  try {
-    const database = await getDatabase();
-    const transaction = database.transaction(
-      [CREDENTIALS_STORE, SETTINGS_STORE],
-      "readwrite",
-    );
-    await transaction.objectStore(CREDENTIALS_STORE).clear();
-    await transaction.objectStore(SETTINGS_STORE).clear();
-    await transaction.done;
-  } catch {
-    /* ignore */
-  }
+  await clearIdbSettings();
+  await deleteLegacyCredentialsDatabase();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1307,8 +937,5 @@ export async function clearAllCredentials(): Promise<void> {
 /* -------------------------------------------------------------------------- */
 
 export async function closeCredentialsDatabase(): Promise<void> {
-  databaseConnection?.close();
-
-  databaseConnection = null;
-  databasePromise = null;
+  await closeIdb();
 }

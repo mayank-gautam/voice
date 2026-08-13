@@ -1,17 +1,23 @@
 /**
- * Browser IndexedDB store for SSO session + per-account AWS role credentials.
- * Matches the aws-sso reference shape: one DB, one `auth` store, key `session`.
+ * Browser IndexedDB for SSO session, role credentials, and app settings.
  *
  * Database: voice-ai-db
  * Store:    auth
+ * Keys:     session  — SSO tokens + selected role credentials
+ *           settings — activeProjectId (and future app prefs)
  */
 
 const DB_NAME = "voice-ai-db";
 const DB_VERSION = 1;
 const STORE = "auth";
 const AUTH_KEY = "session";
+const SETTINGS_KEY = "settings";
+
+/** Legacy DB previously used for credentials + appSettings — removed after migrate. */
+const LEGACY_DB_NAME = "voice-ai-dashboard";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+let legacyMigratePromise: Promise<void> | null = null;
 
 export type IdbRoleCredentials = {
   accountId: string;
@@ -35,6 +41,11 @@ export type IdbAuthState = {
   selected?: { accountId: string; roleName: string };
   roles: Record<string, IdbRoleCredentials>;
   savedAt: string;
+};
+
+export type IdbAppSettings = {
+  activeProjectId?: string;
+  updatedAt: string;
 };
 
 export function authRoleKey(accountId: string, roleName: string) {
@@ -91,9 +102,129 @@ async function withStore<T>(
   });
 }
 
+function deleteLegacyDashboardDb(): Promise<void> {
+  if (typeof indexedDB === "undefined") return Promise.resolve();
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase(LEGACY_DB_NAME);
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+      req.onblocked = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+/**
+ * One-time: copy activeProjectId from voice-ai-dashboard (if present),
+ * then delete that database so the app only uses voice-ai-db.
+ */
+async function migrateLegacyDashboard(): Promise<void> {
+  if (typeof indexedDB === "undefined") return;
+  if (!legacyMigratePromise) {
+    legacyMigratePromise = (async () => {
+      let legacyProjectId: string | null = null;
+
+      try {
+        legacyProjectId = await new Promise<string | null>((resolve) => {
+          let settled = false;
+          const finish = (value: string | null) => {
+            if (settled) return;
+            settled = true;
+            resolve(value);
+          };
+
+          const openReq = indexedDB.open(LEGACY_DB_NAME);
+          openReq.onerror = () => finish(null);
+          openReq.onupgradeneeded = () => {
+            // DB did not exist (or needs upgrade) — no useful legacy data.
+            finish(null);
+          };
+          openReq.onsuccess = () => {
+            const db = openReq.result;
+            if (settled) {
+              try {
+                db.close();
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
+            try {
+              if (!db.objectStoreNames.contains("appSettings")) {
+                db.close();
+                finish(null);
+                return;
+              }
+              const tx = db.transaction("appSettings", "readonly");
+              const store = tx.objectStore("appSettings");
+              const getReq = store.get("activeProjectId");
+              getReq.onsuccess = () => {
+                const row = getReq.result as
+                  | { key?: string; value?: unknown }
+                  | undefined;
+                const value =
+                  typeof row?.value === "string" ? row.value.trim() : "";
+                db.close();
+                finish(value || null);
+              };
+              getReq.onerror = () => {
+                db.close();
+                finish(null);
+              };
+            } catch {
+              try {
+                db.close();
+              } catch {
+                /* ignore */
+              }
+              finish(null);
+            }
+          };
+        });
+      } catch {
+        legacyProjectId = null;
+      }
+
+      if (legacyProjectId) {
+        try {
+          await openDb();
+          const existing = await withStore<IdbAppSettings | undefined>(
+            "readonly",
+            (store) => store.get(SETTINGS_KEY),
+          );
+          if (!existing?.activeProjectId?.trim()) {
+            await withStore("readwrite", (store) =>
+              store.put(
+                {
+                  activeProjectId: legacyProjectId,
+                  updatedAt: new Date().toISOString(),
+                } satisfies IdbAppSettings,
+                SETTINGS_KEY,
+              ),
+            );
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      await deleteLegacyDashboardDb();
+    })().catch(() => undefined);
+  }
+  await legacyMigratePromise;
+}
+
+async function ensureReady(): Promise<void> {
+  await openDb();
+  await migrateLegacyDashboard();
+}
+
 export async function loadIdbAuth(): Promise<IdbAuthState | null> {
   if (typeof indexedDB === "undefined") return null;
   try {
+    await ensureReady();
     const value = await withStore<IdbAuthState | undefined>("readonly", (store) =>
       store.get(AUTH_KEY),
     );
@@ -108,6 +239,7 @@ export async function loadIdbAuth(): Promise<IdbAuthState | null> {
 }
 
 export async function saveIdbAuth(state: IdbAuthState): Promise<IdbAuthState> {
+  await ensureReady();
   const payload: IdbAuthState = {
     ...state,
     roles: state.roles ?? {},
@@ -115,6 +247,68 @@ export async function saveIdbAuth(state: IdbAuthState): Promise<IdbAuthState> {
   };
   await withStore("readwrite", (store) => store.put(payload, AUTH_KEY));
   return payload;
+}
+
+export async function loadIdbSettings(): Promise<IdbAppSettings | null> {
+  if (typeof indexedDB === "undefined") return null;
+  try {
+    await ensureReady();
+    const value = await withStore<IdbAppSettings | undefined>(
+      "readonly",
+      (store) => store.get(SETTINGS_KEY),
+    );
+    if (!value || typeof value !== "object") return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveIdbSettings(
+  settings: IdbAppSettings,
+): Promise<IdbAppSettings> {
+  await ensureReady();
+  const payload: IdbAppSettings = {
+    ...settings,
+    updatedAt: new Date().toISOString(),
+  };
+  await withStore("readwrite", (store) => store.put(payload, SETTINGS_KEY));
+  return payload;
+}
+
+export async function getIdbActiveProjectId(): Promise<string | null> {
+  const settings = await loadIdbSettings();
+  const value = settings?.activeProjectId?.trim();
+  return value || null;
+}
+
+export async function setIdbActiveProjectId(projectId: string): Promise<void> {
+  const normalized = projectId.trim();
+  if (!normalized) {
+    throw new Error("Project ID is required.");
+  }
+  const existing = await loadIdbSettings();
+  await saveIdbSettings({
+    ...existing,
+    activeProjectId: normalized,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export async function clearIdbActiveProjectId(): Promise<void> {
+  if (typeof indexedDB === "undefined") return;
+  try {
+    await ensureReady();
+    const existing = await loadIdbSettings();
+    if (!existing) return;
+    await saveIdbSettings({
+      ...existing,
+      activeProjectId: undefined,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch {
+    /* ignore */
+  }
 }
 
 export async function saveIdbSsoSession(input: {
@@ -199,7 +393,18 @@ export async function setIdbSelectedRole(
 export async function clearIdbAuth(): Promise<void> {
   if (typeof indexedDB === "undefined") return;
   try {
+    await ensureReady();
     await withStore("readwrite", (store) => store.delete(AUTH_KEY));
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function clearIdbSettings(): Promise<void> {
+  if (typeof indexedDB === "undefined") return;
+  try {
+    await ensureReady();
+    await withStore("readwrite", (store) => store.delete(SETTINGS_KEY));
   } catch {
     /* ignore */
   }
@@ -214,6 +419,23 @@ export async function clearIdbRoleCredentials(): Promise<void> {
     selected: undefined,
     roles: {},
   });
+}
+
+export async function closeIdb(): Promise<void> {
+  if (dbPromise) {
+    try {
+      const db = await dbPromise;
+      db.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  dbPromise = null;
+}
+
+/** Best-effort removal of the legacy voice-ai-dashboard database. */
+export async function deleteLegacyCredentialsDatabase(): Promise<void> {
+  await deleteLegacyDashboardDb();
 }
 
 export function getSelectedRole(
