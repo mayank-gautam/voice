@@ -1,17 +1,18 @@
 /**
- * Browser IndexedDB for SSO session, role credentials, and app settings.
+ * Browser IndexedDB for SSO session + per-account AWS role credentials.
+ * Matches the aws-sso reference shape: one DB, one `auth` store, key `session`.
  *
  * Database: voice-ai-db
  * Store:    auth
- * Keys:     session  — SSO tokens + selected role credentials
- *           settings — activeProjectId (and future app prefs)
+ * Key:      session
  */
 
 const DB_NAME = "voice-ai-db";
 const DB_VERSION = 1;
 const STORE = "auth";
 const AUTH_KEY = "session";
-const SETTINGS_KEY = "settings";
+/** Removed — only kept for one-time cleanup of older builds. */
+const LEGACY_SETTINGS_KEY = "settings";
 
 /** Legacy DB previously used for credentials + appSettings — removed after migrate. */
 const LEGACY_DB_NAME = "voice-ai-dashboard";
@@ -40,12 +41,9 @@ export type IdbAuthState = {
   region?: string;
   selected?: { accountId: string; roleName: string };
   roles: Record<string, IdbRoleCredentials>;
-  savedAt: string;
-};
-
-export type IdbAppSettings = {
+  /** Active mapped project for this browser session. */
   activeProjectId?: string;
-  updatedAt: string;
+  savedAt: string;
 };
 
 export function authRoleKey(accountId: string, roleName: string) {
@@ -116,98 +114,120 @@ function deleteLegacyDashboardDb(): Promise<void> {
   });
 }
 
+async function readLegacyDashboardProjectId(): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    let settled = false;
+    const finish = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const openReq = indexedDB.open(LEGACY_DB_NAME);
+    openReq.onerror = () => finish(null);
+    openReq.onupgradeneeded = () => {
+      finish(null);
+    };
+    openReq.onsuccess = () => {
+      const db = openReq.result;
+      if (settled) {
+        try {
+          db.close();
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      try {
+        if (!db.objectStoreNames.contains("appSettings")) {
+          db.close();
+          finish(null);
+          return;
+        }
+        const tx = db.transaction("appSettings", "readonly");
+        const store = tx.objectStore("appSettings");
+        const getReq = store.get("activeProjectId");
+        getReq.onsuccess = () => {
+          const row = getReq.result as
+            | { key?: string; value?: unknown }
+            | undefined;
+          const value =
+            typeof row?.value === "string" ? row.value.trim() : "";
+          db.close();
+          finish(value || null);
+        };
+        getReq.onerror = () => {
+          db.close();
+          finish(null);
+        };
+      } catch {
+        try {
+          db.close();
+        } catch {
+          /* ignore */
+        }
+        finish(null);
+      }
+    };
+  });
+}
+
 /**
- * One-time: copy activeProjectId from voice-ai-dashboard (if present),
- * then delete that database so the app only uses voice-ai-db.
+ * One-time cleanup:
+ * - migrate activeProjectId from voice-ai-dashboard / old settings key onto session
+ * - delete the settings key and voice-ai-dashboard DB
  */
 async function migrateLegacyDashboard(): Promise<void> {
   if (typeof indexedDB === "undefined") return;
   if (!legacyMigratePromise) {
     legacyMigratePromise = (async () => {
       let legacyProjectId: string | null = null;
-
       try {
-        legacyProjectId = await new Promise<string | null>((resolve) => {
-          let settled = false;
-          const finish = (value: string | null) => {
-            if (settled) return;
-            settled = true;
-            resolve(value);
-          };
-
-          const openReq = indexedDB.open(LEGACY_DB_NAME);
-          openReq.onerror = () => finish(null);
-          openReq.onupgradeneeded = () => {
-            // DB did not exist (or needs upgrade) — no useful legacy data.
-            finish(null);
-          };
-          openReq.onsuccess = () => {
-            const db = openReq.result;
-            if (settled) {
-              try {
-                db.close();
-              } catch {
-                /* ignore */
-              }
-              return;
-            }
-            try {
-              if (!db.objectStoreNames.contains("appSettings")) {
-                db.close();
-                finish(null);
-                return;
-              }
-              const tx = db.transaction("appSettings", "readonly");
-              const store = tx.objectStore("appSettings");
-              const getReq = store.get("activeProjectId");
-              getReq.onsuccess = () => {
-                const row = getReq.result as
-                  | { key?: string; value?: unknown }
-                  | undefined;
-                const value =
-                  typeof row?.value === "string" ? row.value.trim() : "";
-                db.close();
-                finish(value || null);
-              };
-              getReq.onerror = () => {
-                db.close();
-                finish(null);
-              };
-            } catch {
-              try {
-                db.close();
-              } catch {
-                /* ignore */
-              }
-              finish(null);
-            }
-          };
-        });
+        legacyProjectId = await readLegacyDashboardProjectId();
       } catch {
         legacyProjectId = null;
       }
 
-      if (legacyProjectId) {
-        try {
-          await openDb();
-          const existing = await withStore<IdbAppSettings | undefined>(
-            "readonly",
-            (store) => store.get(SETTINGS_KEY),
+      try {
+        await openDb();
+        const [session, leftoverSettings] = await Promise.all([
+          withStore<IdbAuthState | undefined>("readonly", (store) =>
+            store.get(AUTH_KEY),
+          ),
+          withStore<{ activeProjectId?: string } | undefined>("readonly", (store) =>
+            store.get(LEGACY_SETTINGS_KEY),
+          ),
+        ]);
+
+        const fromSettings =
+          typeof leftoverSettings?.activeProjectId === "string"
+            ? leftoverSettings.activeProjectId.trim()
+            : "";
+        const projectId =
+          session?.activeProjectId?.trim() ||
+          fromSettings ||
+          legacyProjectId ||
+          "";
+
+        if (session && (projectId || leftoverSettings)) {
+          await withStore("readwrite", (store) =>
+            store.put(
+              {
+                ...session,
+                roles: session.roles ?? {},
+                activeProjectId: projectId || session.activeProjectId,
+                savedAt: session.savedAt || new Date().toISOString(),
+              } satisfies IdbAuthState,
+              AUTH_KEY,
+            ),
           );
-          if (!existing?.activeProjectId?.trim()) {
-            await withStore("readwrite", (store) =>
-              store.put(
-                {
-                  activeProjectId: legacyProjectId,
-                  updatedAt: new Date().toISOString(),
-                } satisfies IdbAppSettings,
-                SETTINGS_KEY,
-              ),
-            );
-          }
-        } catch {
-          /* ignore */
         }
+
+        await withStore("readwrite", (store) =>
+          store.delete(LEGACY_SETTINGS_KEY),
+        );
+      } catch {
+        /* ignore */
       }
 
       await deleteLegacyDashboardDb();
@@ -249,36 +269,9 @@ export async function saveIdbAuth(state: IdbAuthState): Promise<IdbAuthState> {
   return payload;
 }
 
-export async function loadIdbSettings(): Promise<IdbAppSettings | null> {
-  if (typeof indexedDB === "undefined") return null;
-  try {
-    await ensureReady();
-    const value = await withStore<IdbAppSettings | undefined>(
-      "readonly",
-      (store) => store.get(SETTINGS_KEY),
-    );
-    if (!value || typeof value !== "object") return null;
-    return value;
-  } catch {
-    return null;
-  }
-}
-
-export async function saveIdbSettings(
-  settings: IdbAppSettings,
-): Promise<IdbAppSettings> {
-  await ensureReady();
-  const payload: IdbAppSettings = {
-    ...settings,
-    updatedAt: new Date().toISOString(),
-  };
-  await withStore("readwrite", (store) => store.put(payload, SETTINGS_KEY));
-  return payload;
-}
-
 export async function getIdbActiveProjectId(): Promise<string | null> {
-  const settings = await loadIdbSettings();
-  const value = settings?.activeProjectId?.trim();
+  const auth = await loadIdbAuth();
+  const value = auth?.activeProjectId?.trim();
   return value || null;
 }
 
@@ -287,24 +280,24 @@ export async function setIdbActiveProjectId(projectId: string): Promise<void> {
   if (!normalized) {
     throw new Error("Project ID is required.");
   }
-  const existing = await loadIdbSettings();
-  await saveIdbSettings({
+  const existing = await loadIdbAuth();
+  if (!existing) {
+    throw new Error("No SSO session in IndexedDB — sign in first");
+  }
+  await saveIdbAuth({
     ...existing,
     activeProjectId: normalized,
-    updatedAt: new Date().toISOString(),
   });
 }
 
 export async function clearIdbActiveProjectId(): Promise<void> {
   if (typeof indexedDB === "undefined") return;
   try {
-    await ensureReady();
-    const existing = await loadIdbSettings();
-    if (!existing) return;
-    await saveIdbSettings({
+    const existing = await loadIdbAuth();
+    if (!existing?.activeProjectId) return;
+    await saveIdbAuth({
       ...existing,
       activeProjectId: undefined,
-      updatedAt: new Date().toISOString(),
     });
   } catch {
     /* ignore */
@@ -331,6 +324,8 @@ export async function saveIdbSsoSession(input: {
     region: input.region ?? existing?.region,
     selected: input.keepRoles === false ? undefined : existing?.selected,
     roles: input.keepRoles === false ? {} : (existing?.roles ?? {}),
+    activeProjectId:
+      input.keepRoles === false ? undefined : existing?.activeProjectId,
     savedAt: new Date().toISOString(),
   });
 }
@@ -370,6 +365,7 @@ export async function saveIdbRoleCredentials(
       ...(existing?.roles ?? {}),
       [key]: entry,
     },
+    activeProjectId: existing?.activeProjectId,
     savedAt: new Date().toISOString(),
   });
 }
@@ -395,16 +391,6 @@ export async function clearIdbAuth(): Promise<void> {
   try {
     await ensureReady();
     await withStore("readwrite", (store) => store.delete(AUTH_KEY));
-  } catch {
-    /* ignore */
-  }
-}
-
-export async function clearIdbSettings(): Promise<void> {
-  if (typeof indexedDB === "undefined") return;
-  try {
-    await ensureReady();
-    await withStore("readwrite", (store) => store.delete(SETTINGS_KEY));
   } catch {
     /* ignore */
   }

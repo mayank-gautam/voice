@@ -78,7 +78,7 @@ type ProjectsApiResponse = {
 };
 
 /**
- * Resolve active project from IndexedDB (voice-ai-db settings) only.
+ * Resolve active project from IndexedDB auth session only.
  * Never falls back to JSON defaultProject — user must select via SSO or the dropdown.
  */
 async function resolveClientActiveProjectId(

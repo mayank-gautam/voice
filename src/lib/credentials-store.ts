@@ -11,7 +11,6 @@ import {
   clearIdbActiveProjectId,
   clearIdbAuth,
   clearIdbRoleCredentials,
-  clearIdbSettings,
   closeIdb,
   deleteLegacyCredentialsDatabase,
   getIdbActiveProjectId,
@@ -792,11 +791,11 @@ export async function clearSelectedCredentials(): Promise<void> {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Active project — voice-ai-db / auth (settings key)                         */
+/* Active project — stored on voice-ai-db auth session                        */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Read the active projectId from IndexedDB (voice-ai-db).
+ * Read the active projectId from IndexedDB (voice-ai-db / auth session).
  * This is the client source of truth for the current project.
  */
 export async function getActiveProjectIdSetting(): Promise<string | null> {
@@ -805,7 +804,7 @@ export async function getActiveProjectIdSetting(): Promise<string | null> {
 }
 
 /**
- * Persist the active projectId in IndexedDB (voice-ai-db).
+ * Persist the active projectId on the IndexedDB auth session.
  */
 export async function setActiveProjectIdSetting(projectId: string): Promise<void> {
   if (!isBrowser()) return;
@@ -922,13 +921,12 @@ export async function clearStoredAccountCredentials(): Promise<void> {
 
 /*
  * Clears credentials, selected accounts, cached
- * SSO tokens, and every app setting.
+ * SSO tokens, and active project on the auth session.
  *
  * Use this function only for explicit logout.
  */
 export async function clearAllCredentials(): Promise<void> {
   await clearIdbAuth();
-  await clearIdbSettings();
   await deleteLegacyCredentialsDatabase();
 }
 
